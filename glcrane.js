@@ -12,12 +12,8 @@ var modelCrane, modelViewer;
 // WebGL context, shaders, attributes, matrices, etc.
 var gl;
 var shaderVertex, shaderFragment, shaderProgram;
-var matrixPerspective  = mat4.create ();
-var matrixModelView    = mat4.create ();
-var matrixNormal       = mat3.create ();
-var matrixOrthographic = mat4.create ();
-var matrixIdentity4    = mat4.identity (mat4.create ());
-var matrixIdentity3    = mat3.identity (mat3.create ());
+var matrixPerspective,  matrixModelView, matrixNormal,
+    matrixOrthographic, matrixIdentity4, matrixIdentity3;
 var textureArray = [];
 
 // Animation and frame data.
@@ -28,13 +24,21 @@ var frameT       = 0.00;
 // Our program starts here.
 window.onload = function() {
    // Now our DOM is ready, Link elements to variables.
-   domCanvas   = document.getElementById ("canvas");
-   domCrane    = document.getElementById ("crane");
-   domViewer   = document.getElementById ("viewer");
-   domVertex   = document.getElementById ("vertex");
-   domFragment = document.getElementById ("fragment");
-   domOuter    = document.getElementById ("outer");
-   domErrors   = document.getElementById ("errors");
+   domCanvas    = document.getElementById ("canvas");
+   domCrane     = document.getElementById ("crane");
+   domViewer    = document.getElementById ("viewer");
+   domVertex    = document.getElementById ("vertex");
+   domFragment  = document.getElementById ("fragment");
+   domOuter     = document.getElementById ("outer");
+   domErrors    = document.getElementById ("errors");
+
+   // Initialize matrices.
+   matrixPerspective  = mat4.create ();
+   matrixModelView    = mat4.create ();
+   matrixNormal       = mat3.create ();
+   matrixOrthographic = mat4.create ();
+   matrixIdentity4    = mat4.identity (mat4.create ());
+   matrixIdentity3    = mat3.identity (mat3.create ());
 
    // Initialize canvas size.
    window.onresize = windowResize;
@@ -155,10 +159,8 @@ function glInit (canvas) {
 
    // Proper render state.
    gl.enable (gl.DEPTH_TEST);
-/*
    gl.enable (gl.CULL_FACE);
    gl.cullFace (gl.BACK);
-*/
    gl.enable (gl.BLEND);
    gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
