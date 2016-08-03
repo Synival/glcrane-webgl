@@ -1,0 +1,27 @@
+<html>
+   <head>
+      <title>3D Object Test</title>
+      <link rel="stylesheet" type="text/css" href="style.css" />
+
+      <script src="jquery-3.1.0.min.js"></script>
+      <script src="gl-matrix/dist/gl-matrix-min.js"></script>
+      <script src="webgl-obj-loader/webgl-obj-loader.js"></script>
+      <script src="glcrane.js"></script>
+   </head>
+   <body>
+      <div id="outer">
+         <canvas id="canvas"></canvas>
+         <div id="errors">Oh, hi there</div>
+         <div id="license">
+            3D Origami crane by JuanG3D is licensed under CC Attribution
+            (<a href="https://skfb.ly/yxSK">https://skfb.ly/yxSK</a>)
+         </div>
+      </div>
+      <h2>Vertex shader:</h2>
+         <pre><code id="vertex"></code></pre>
+      <h2>Fragment shader:</h2>
+         <pre><code id="fragment"></code></pre>
+      <h2>Object code:</h2>
+         <pre><code id="object"></code></pre>
+   </body>
+</html>

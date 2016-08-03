@@ -1,0 +1,50 @@
+/* Code should look like a console. */
+body {
+   width:  95vw;
+   margin: 2.5vh auto;
+}
+
+#outer {
+   width:      100%;
+   height:     95vh;
+   position:   relative;
+}
+
+#canvas {
+   background: #333;
+   width:      100%;
+   height:     100%;
+}
+
+#errors {
+   position:    absolute;
+   left:        50%;
+   top:         50%;
+   transform:   translateX(-50%) translateY(-50%);
+   -webkit-transform:
+      translateX(-50%) translateY(-50%);
+   white-space: pre;
+   font-family: sans-serif;
+   color:       #fff;
+   display:     none;
+}
+
+pre {
+   background: #000;
+   color:      #ccc;
+   padding:    6pt;
+   width:      calc(100% - 12pt);
+   margin:     2.5vh auto 0 auto;
+   display:    block;
+}
+
+#license {
+   position: absolute;
+   left: 12px;
+   top: 12px;
+   color: #fff;
+}
+
+#license a {
+   color: #fff;
+}
