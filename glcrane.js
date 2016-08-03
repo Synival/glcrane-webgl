@@ -136,11 +136,15 @@ function objectsDone () {
    }
 
    // Add events to our canvas.
-   domCanvas.addEventListener ("mousedown", canvasMouseDown);
-   domCanvas.addEventListener ("mouseup",   canvasMouseUp);
-   domCanvas.addEventListener ("mousemove", canvasMouseMove);
-   window.addEventListener    ("keydown",   canvasKeyDown);
-   window.addEventListener    ("keyup",     canvasKeyUp);
+   domCanvas.addEventListener ("mousedown",   canvasMouseDown);
+   domCanvas.addEventListener ("touchstart",  canvasMouseDown);
+   domCanvas.addEventListener ("mouseup",     canvasMouseUp);
+   domCanvas.addEventListener ("touchend",    canvasMouseUp);
+   domCanvas.addEventListener ("touchcancel", canvasMouseUp);
+   domCanvas.addEventListener ("mousemove",   canvasMouseMove);
+   domCanvas.addEventListener ("touchmove",   canvasMouseMove);
+   window.addEventListener    ("keydown",     canvasKeyDown);
+   window.addEventListener    ("keyup",       canvasKeyUp);
 }
 
 function glInitContext () {
@@ -616,11 +620,18 @@ function canvasMouseDown (e) {
    mouseDown = true;
    mouseSetCoordinates (this, e);
    mouseSetLast ();
-   mouseDraw ();
-   event.preventDefault ();
+   if (!mouseDraw ())
+      mouseDownOff ();
+   else
+      event.preventDefault ();
 }
 
 function canvasMouseUp (e) {
+   mouseDownOff ();
+   event.preventDefault ();
+}
+
+function mouseDownOff () {
    mouseDown = false;
    mouseX     = null;
    mouseY     = null;
@@ -630,7 +641,6 @@ function canvasMouseUp (e) {
    mouseLastY = null;
    mouseLastU = null;
    mouseLastV = null;
-   event.preventDefault ();
 }
 
 function canvasMouseMove (e) {
@@ -661,9 +671,16 @@ function canvasKeyUp (e) {
 
 function mouseSetCoordinates (element, e)
 {
-   var rect = element.getBoundingClientRect (),
-       x = parseInt (e.clientX - rect.left),
-       y = parseInt (e.clientY - rect.top);
+   var rect = element.getBoundingClientRect ();
+   var x, y;
+   if (e.clientX != undefined) {
+      x = parseInt (e.clientX - rect.left);
+      y = parseInt (e.clientY - rect.top);
+   }
+   else {
+      x = parseInt (e.pageX - rect.left) - (window.pageXOffset),
+      y = parseInt (e.pageY - rect.top)  - (window.pageYOffset);
+   }
    var change = true;
    if (x == mouseX && y == mouseY)
       change = false;
@@ -697,12 +714,15 @@ function mouseDraw () {
    if (pixels[3] < 1.00) {
       mouseU = null;
       mouseV = null;
-      return;
+      return 0;
    }
 
    // Determine texture coordinate based on pixel read.
    mouseU = parseFloat (pixels[0]) / 255.00,
    mouseV = parseFloat (pixels[1]) / 255.00;
+
+   // Keep track of how much we've drawn.
+   var count = 0;
 
    // Draw a trail.
    var x = mouseU * 2.00 - 1.00, y = mouseV * 2.00 - 1.00;
@@ -715,12 +735,14 @@ function mouseDraw () {
             ix += ixStep;
             iy += iyStep;
             mouseDrawAt (ix, iy);
+            count++;
          }
       }
    }
 
    // Draw our destination.
    mouseDrawAt (x, y);
+   return count + 1;
 }
 
 function mouseDrawAt (x, y) {
