@@ -14,6 +14,7 @@ var shaderVertex, shaderFragment, shaderProgram;
 var matrixProjection = mat4.create ();
 var matrixModelView  = mat4.create ();
 var matrixNormal     = mat3.create ();
+var textureArray = [];
 
 // Animation and frame data.
 var frameLast    = 0.00;
@@ -94,7 +95,13 @@ function objectLoadCallback (url) {
 
 function objectsDone () {
    // Intialize WebGL.
-   glInit (domCanvas);
+   try {
+      glInit (domCanvas);
+   }
+   catch (e) {
+      errorAddText (e.toString ());
+      throw e;
+   }
 }
 
 function glInit (canvas) {
@@ -107,37 +114,29 @@ function glInit (canvas) {
    catch (e) {
       if (!gl)
          errorAddText ("Couldn't load WebGL.");
-      return;
+      throw e;
    }
 
    // Load our shaders.
-   try {
-      shaderVertex   = glLoadShader (gl.VERTEX_SHADER,
-         domVertex.innerHTML);
-      shaderFragment = glLoadShader (gl.FRAGMENT_SHADER,
-         domFragment.innerHTML);
-      shaderProgram  = glCreateProgram (
-         [shaderVertex, shaderFragment]);
-   }
-   catch (e) {
-      errorAddText (e.toString ());
-      return;
-   }
+   shaderVertex   = glLoadShader (gl.VERTEX_SHADER,
+      domVertex.innerHTML);
+   shaderFragment = glLoadShader (gl.FRAGMENT_SHADER,
+      domFragment.innerHTML);
+   shaderProgram  = glCreateProgram ([shaderVertex, shaderFragment]);
 
    // Load our crane object.
-   try {
-      modelCrane = new OBJ.Mesh (domObject.innerHTML);
-      if (modelCrane)
-         OBJ.initMeshBuffers (gl, modelCrane);
-   }
-   catch (e) {
-      errorAddText (e.toString ());
-   }
+   modelCrane = new OBJ.Mesh (domObject.innerHTML);
+   if (modelCrane)
+      OBJ.initMeshBuffers (gl, modelCrane);
+
+   // Load textures.
+   textureArray.push (glLoadTexture ("images/shadow.png"));
+   textureArray.push (glLoadTexture ("images/paper.jpg"));
 
    // Draw everything back a bit, rotated downward 30 degrees.
    mat4.identity (matrixModelView);
    var v = vec3.create ();
-   vec3.set (v, 0.00, 0.00, -7.50);
+   vec3.set (v, 0.00, 0.00, -5.00);
    mat4.translate (matrixModelView, matrixModelView, v);
    vec3.set (v, 1.00, 0.00, 0.00);
    mat4.rotate (matrixModelView, matrixModelView, 30.00 / 180.00 * Math.PI, v);
@@ -145,9 +144,38 @@ function glInit (canvas) {
    // Make sure our normals are adjusted properly.
    glUpdateNormalMatrix ();
 
+   // Proper render state.
+   gl.enable (gl.DEPTH_TEST);
+   gl.enable (gl.CULL_FACE);
+   gl.enable (gl.BLEND);
+   gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+   gl.cullFace (gl.BACK);
+
    // Everything worked!  Activate our screen.
    glInitScreen ();
    glNextFrame (0.00);
+}
+
+function glLoadTexture (url)
+{
+   var element = new Image ();
+   var id = gl.createTexture ();
+   id.complete = false;
+   element.onload = function() {
+      gl.bindTexture (gl.TEXTURE_2D, id);
+      gl.pixelStorei (gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D (gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE,
+                     element);
+      gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture (gl.TEXTURE_2D, null);
+      id.complete = true;
+      glCheckError ();
+   }
+   element.src = url;
+   return id;
 }
 
 function glNextFrame (t) {
@@ -170,13 +198,12 @@ function glNextFrame (t) {
 
 function glInitScreen () {
    // Make sure it's using the proper size.
+   gl.viewportWidth  = domCanvas.width;
+   gl.viewportHeight = domCanvas.height;
    gl.viewport (0, 0, gl.viewportWidth, gl.viewportHeight);
 
-   // Proper render state.
-   gl.enable (gl.DEPTH_TEST);
-
-   // Render at a 45 degree angle.
-   mat4.perspective (matrixProjection, 45,
+   // Render with a 45 degree FOV.
+   mat4.perspective (matrixProjection, 45.00 / 180.00 * Math.PI,
       gl.viewportWidth / gl.viewportHeight, 0.1, 100.0);
 }
 
@@ -189,8 +216,9 @@ function glUpdateNormalMatrix() {
 
 function glCheckError () {
    var err = gl.getError ();
-   if (err != gl.NO_ERROR)
-      alert ("Error!");
+   if (err != gl.NO_ERROR) {
+      console.log (new Error().stack);
+   }
 }
 
 function glSetUniforms () {
@@ -206,7 +234,7 @@ function glSetUniforms () {
 
 function glDrawScene () {
    // Black screen.
-   gl.clearColor (0.00, 0.00, 0.00, 1.00);
+   gl.clearColor (0.25, 0.25, 0.25, 1.00);
    gl.clear (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
    // Set our matrices.
@@ -225,10 +253,23 @@ function glDrawScene () {
    gl.vertexAttribPointer (shaderProgram.aNormal,
       obj.normalBuffer.itemSize, gl.FLOAT, false, 0, 0);
 
-   // Draw!
-   gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, obj.indexBuffer);
-   gl.drawElements (gl.TRIANGLES, obj.indexBuffer.numItems,
-      gl.UNSIGNED_SHORT, 0);
+   // Bind texture coordinates.
+   gl.bindBuffer (gl.ARRAY_BUFFER, obj.textureBuffer);
+   gl.vertexAttribPointer (shaderProgram.aTexcoord0,
+      obj.textureBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+   // Draw all objects.
+   for (var i = 0; i < obj.objects; i++) {
+      if (!textureArray[i].complete)
+         continue;
+      gl.activeTexture (gl.TEXTURE0);
+      gl.bindTexture (gl.TEXTURE_2D, textureArray[i]);
+      gl.uniform1i (shaderProgram.uTex0, 0);
+
+      gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, obj.indexBuffer[i]);
+      gl.drawElements (gl.TRIANGLES, obj.indexBuffer[i].numItems,
+         gl.UNSIGNED_SHORT, 0);
+   }
 }
 
 function glLoadShader (type, source) {
@@ -260,15 +301,18 @@ function glCreateProgram (shaders) {
 
    // Get and enable vertex attributes.
    gl.useProgram (id);
-   id.aPosition = gl.getAttribLocation (id, "aPosition");
-   id.aNormal   = gl.getAttribLocation (id, "aNormal");
+   id.aPosition  = gl.getAttribLocation (id, "aPosition");
+   id.aNormal    = gl.getAttribLocation (id, "aNormal");
+   id.aTexcoord0 = gl.getAttribLocation (id, "aTexcoord0");
    gl.enableVertexAttribArray (id.aPosition);
    gl.enableVertexAttribArray (id.aNormal);
+   gl.enableVertexAttribArray (id.aTexcoord0);
 
    // Get uniform locations.
    id.uMatrixProjection = gl.getUniformLocation (id, "uMatrixProjection");
    id.uMatrixModelView  = gl.getUniformLocation (id, "uMatrixModelView");
    id.uMatrixNormal     = gl.getUniformLocation (id, "uMatrixNormal");
+   id.uTex0             = gl.getUniformLocation (id, "uTex0");
 
    // Return our new object handle.
    return id;

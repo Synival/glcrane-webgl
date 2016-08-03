@@ -1,6 +1,0 @@
-[submodule "webgl-obj-loader"]
-	path = webgl-obj-loader
-	url = https://github.com/frenchtoast747/webgl-obj-loader
-[submodule "gl-matrix"]
-	path = gl-matrix
-	url = https://github.com/toji/gl-matrix
