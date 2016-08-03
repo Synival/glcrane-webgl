@@ -195,14 +195,14 @@ function glLoadTexture (url)
 function glNextFrame (t) {
    // Keep track of our frame time.
    frameLast    = frameCurrent;
-   frameCurrent = t;
-   frameT       = (frameCurrent - frameLast) / 1000.00;
+   frameCurrent = t / 1000.00;
+   frameT       = (frameCurrent - frameLast);
 
    // Slowly rotate.
    var vec = vec3.create ();
    vec3.set (vec, 0.00, 1.00, 0.00);
    mat4.rotate (matrixModelView, matrixModelView,
-      (45.00 / 180.00) * frameT * Math.PI, vec);
+      (15.00 / 180.00) * frameT * Math.PI, vec);
    glUpdateNormalMatrix ();
 
    // Redraw our scene.
@@ -260,6 +260,9 @@ function glSetUniforms (viewer) {
       gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
          matrixNormal);
    }
+
+   // Inform our shader of the time.
+   gl.uniform1fv (shaderProgram.uTime, [frameCurrent]);
    glCheckError ();
 }
 
@@ -350,6 +353,7 @@ function glCreateProgram (shaders) {
    id.uMatrixModelView  = gl.getUniformLocation (id, "uMatrixModelView");
    id.uMatrixNormal     = gl.getUniformLocation (id, "uMatrixNormal");
    id.uTex0             = gl.getUniformLocation (id, "uTex0");
+   id.uTime             = gl.getUniformLocation (id, "uTime");
 
    // Return our new object handle.
    return id;
