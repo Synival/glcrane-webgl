@@ -1,19 +1,23 @@
 // DOM elements to be linked in window.onload().
-var domCanvas, domObject, domVertex, domFragment, domOuter, domErrors;
+var domCanvas, domCrane, domViewer, domVertex, domFragment,
+    domOuter, domErrors;
 
 // Generic object-loading.
 var objectLoadCount, objectLoadTotal, objectLoadQueue = [];
 var errorText;
 
 // 3D models.
-var modelCrane;
+var modelCrane, modelViewer;
 
 // WebGL context, shaders, attributes, matrices, etc.
 var gl;
 var shaderVertex, shaderFragment, shaderProgram;
-var matrixProjection = mat4.create ();
-var matrixModelView  = mat4.create ();
-var matrixNormal     = mat3.create ();
+var matrixPerspective  = mat4.create ();
+var matrixModelView    = mat4.create ();
+var matrixNormal       = mat3.create ();
+var matrixOrthographic = mat4.create ();
+var matrixIdentity4    = mat4.identity (mat4.create ());
+var matrixIdentity3    = mat3.identity (mat3.create ());
 var textureArray = [];
 
 // Animation and frame data.
@@ -25,7 +29,8 @@ var frameT       = 0.00;
 window.onload = function() {
    // Now our DOM is ready, Link elements to variables.
    domCanvas   = document.getElementById ("canvas");
-   domObject   = document.getElementById ("object");
+   domCrane    = document.getElementById ("crane");
+   domViewer   = document.getElementById ("viewer");
    domVertex   = document.getElementById ("vertex");
    domFragment = document.getElementById ("fragment");
    domOuter    = document.getElementById ("outer");
@@ -36,7 +41,8 @@ window.onload = function() {
    windowResize ();
 
    // Load our objects.
-   objectQueue (domObject,   "crane.obj");
+   objectQueue (domCrane,    "crane.obj");
+   objectQueue (domViewer,   "viewer.obj");
    objectQueue (domVertex,   "shader.vert");
    objectQueue (domFragment, "shader.frag");
    objectLoad ();
@@ -125,9 +131,12 @@ function glInit (canvas) {
    shaderProgram  = glCreateProgram ([shaderVertex, shaderFragment]);
 
    // Load our crane object.
-   modelCrane = new OBJ.Mesh (domObject.innerHTML);
-   if (modelCrane)
-      OBJ.initMeshBuffers (gl, modelCrane);
+   modelCrane = new OBJ.Mesh (domCrane.innerHTML);
+   OBJ.initMeshBuffers (gl, modelCrane);
+
+   // Load our texture viewer.
+   modelViewer = new OBJ.Mesh (domViewer.innerHTML);
+   OBJ.initMeshBuffers (gl, modelViewer);
 
    // Load textures.
    textureArray.push (glLoadTexture ("images/shadow.png"));
@@ -146,10 +155,12 @@ function glInit (canvas) {
 
    // Proper render state.
    gl.enable (gl.DEPTH_TEST);
+/*
    gl.enable (gl.CULL_FACE);
+   gl.cullFace (gl.BACK);
+*/
    gl.enable (gl.BLEND);
    gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-   gl.cullFace (gl.BACK);
 
    // Everything worked!  Activate our screen.
    glInitScreen ();
@@ -202,9 +213,15 @@ function glInitScreen () {
    gl.viewportHeight = domCanvas.height;
    gl.viewport (0, 0, gl.viewportWidth, gl.viewportHeight);
 
+   // Get the width:height ratio.
+   var r = gl.viewportWidth / gl.viewportHeight;
+
    // Render with a 45 degree FOV.
-   mat4.perspective (matrixProjection, 45.00 / 180.00 * Math.PI,
-      gl.viewportWidth / gl.viewportHeight, 0.1, 100.0);
+   mat4.perspective (matrixPerspective, 45.00 / 180.00 * Math.PI,
+      r, 0.1, 100.0);
+
+   // Set up our orthographic matrix.
+   mat4.ortho (matrixOrthographic, 1 - (r * 4), 1, 1, -3, -100, 100);
 }
 
 function glUpdateNormalMatrix() {
@@ -221,14 +238,25 @@ function glCheckError () {
    }
 }
 
-function glSetUniforms () {
-   // Set our matrices.
-   gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false,
-      matrixProjection);
-   gl.uniformMatrix4fv (shaderProgram.uMatrixModelView, false,
-      matrixModelView);
-   gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
-      matrixNormal);
+function glSetUniforms (viewer = 0) {
+   // Is this our texture viewer?
+   if (viewer) {
+      gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false,
+         matrixOrthographic);
+      gl.uniformMatrix4fv (shaderProgram.uMatrixModelView, false,
+         matrixIdentity4);
+      gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
+         matrixIdentity3);
+   }
+   // If not, use our standard 3D matrices.
+   else {
+      gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false,
+         matrixPerspective);
+      gl.uniformMatrix4fv (shaderProgram.uMatrixModelView, false,
+         matrixModelView);
+      gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
+         matrixNormal);
+   }
    glCheckError ();
 }
 
@@ -238,11 +266,16 @@ function glDrawScene () {
    gl.clear (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
    // Set our matrices.
-   glSetUniforms ();
+   glSetUniforms (0);
+   glDrawObject (modelCrane);
 
-   // Use our crane object.
-   var obj = modelCrane;
+   // Set up an orthographic matrix for our texture viewer.
+   glSetUniforms (1);
+   glDrawObject (modelViewer, 1);
+}
 
+function glDrawObject (obj, texOffset = 0)
+{
    // Bind vertex positions.
    gl.bindBuffer (gl.ARRAY_BUFFER, obj.vertexBuffer);
    gl.vertexAttribPointer (shaderProgram.aPosition,
@@ -260,10 +293,11 @@ function glDrawScene () {
 
    // Draw all objects.
    for (var i = 0; i < obj.objects; i++) {
-      if (!textureArray[i].complete)
+      var t = (i + texOffset) % textureArray.length;
+      if (!textureArray[t].complete)
          continue;
       gl.activeTexture (gl.TEXTURE0);
-      gl.bindTexture (gl.TEXTURE_2D, textureArray[i]);
+      gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);
       gl.uniform1i (shaderProgram.uTex0, 0);
 
       gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, obj.indexBuffer[i]);
