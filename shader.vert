@@ -2,7 +2,7 @@
  * -----------
  * Vertex shader used for all rendering. */
 
-precision mediump float;
+precision highp float;
 
 attribute vec3 aPosition, aNormal;
 attribute vec2 aTexcoord0;

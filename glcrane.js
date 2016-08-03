@@ -159,6 +159,7 @@ function glInit (canvas) {
 
    // Proper render state.
    gl.enable (gl.DEPTH_TEST);
+   gl.depthFunc (gl.LESS);
    gl.enable (gl.CULL_FACE);
    gl.cullFace (gl.BACK);
    gl.enable (gl.BLEND);
@@ -220,7 +221,7 @@ function glInitScreen () {
 
    // Render with a 45 degree FOV.
    mat4.perspective (matrixPerspective, 45.00 / 180.00 * Math.PI,
-      r, 0.1, 100.0);
+      r, 1.5, 100.0);
 
    // Set up our orthographic matrix.
    mat4.ortho (matrixOrthographic, 1 - (r * 4), 1, 1, -3, -100, 100);
@@ -240,7 +241,7 @@ function glCheckError () {
    }
 }
 
-function glSetUniforms (viewer = 0) {
+function glSetUniforms (viewer) {
    // Is this our texture viewer?
    if (viewer) {
       gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false,
@@ -268,15 +269,15 @@ function glDrawScene () {
    gl.clear (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
    // Set our matrices.
-   glSetUniforms (0);
-   glDrawObject (modelCrane);
+   glSetUniforms (false);
+   glDrawObject (modelCrane, 0);
 
    // Set up an orthographic matrix for our texture viewer.
-   glSetUniforms (1);
+   glSetUniforms (true);
    glDrawObject (modelViewer, 1);
 }
 
-function glDrawObject (obj, texOffset = 0)
+function glDrawObject (obj, texOffset)
 {
    // Bind vertex positions.
    gl.bindBuffer (gl.ARRAY_BUFFER, obj.vertexBuffer);

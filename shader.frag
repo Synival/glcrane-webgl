@@ -2,7 +2,7 @@
  * -----------
  * Fragment shader used for all rendering. */
 
-precision mediump float;
+precision highp float;
 
 varying vec3 vNormal;
 varying vec2 vTexcoord0;
