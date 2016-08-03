@@ -1,25 +1,44 @@
 // DOM elements to be linked in window.onload().
-var domCanvas, domCrane, domViewer, domVertex, domFragment,
+var domCanvas, domCrane, domViewer, domPaint, domVertex, domFragment,
     domOuter, domErrors;
 
-// Generic object-loading.
+// Generic object/texture loading.
 var objectLoadCount, objectLoadTotal, objectLoadQueue = [];
+var textureLoadCount, textureLoadTotal;
 var errorText;
 
 // 3D models.
-var modelCrane, modelViewer;
+var modelCrane, modelViewer, modelPaint;
 
 // WebGL context, shaders, attributes, matrices, etc.
 var gl;
 var shaderVertex, shaderFragment, shaderProgram;
 var matrixPerspective,  matrixModelView, matrixNormal,
-    matrixOrthographic, matrixIdentity4, matrixIdentity3;
+    matrixOrthographic, matrixIdentity4, matrixIdentity3,
+    matrixViewer;
 var textureArray = [];
+var fbPicking, fbModel;
+var glWhite = [1.00, 1.00, 1.00, 1.00], glBlack = [0.00, 0.00, 0.00, 1.00];
 
 // Animation and frame data.
 var frameLast    = 0.00;
 var frameCurrent = 0.00;
 var frameT       = 0.00;
+
+// Spraypainting stuff.
+var mouseDrawColor = glWhite;
+var mouseDrawSize  = 0.05;
+var mouseDown      = false;
+var mouseX         = null;
+var mouseY         = null;
+var mouseYflip     = null;
+var mouseU         = null;
+var mouseV         = null;
+var mouseLastU     = null;
+var mouseLastV     = null;
+
+// Debug tools.
+var debugUV    = false;
 
 // Our program starts here.
 window.onload = function() {
@@ -27,6 +46,7 @@ window.onload = function() {
    domCanvas    = document.getElementById ("canvas");
    domCrane     = document.getElementById ("crane");
    domViewer    = document.getElementById ("viewer");
+   domPaint     = document.getElementById ("paint");
    domVertex    = document.getElementById ("vertex");
    domFragment  = document.getElementById ("fragment");
    domOuter     = document.getElementById ("outer");
@@ -37,8 +57,9 @@ window.onload = function() {
    matrixModelView    = mat4.create ();
    matrixNormal       = mat3.create ();
    matrixOrthographic = mat4.create ();
-   matrixIdentity4    = mat4.identity (mat4.create ());
-   matrixIdentity3    = mat3.identity (mat3.create ());
+   matrixIdentity4    = mat4.create ();
+   matrixIdentity3    = mat3.create ();
+   matrixViewer       = mat4.create ();
 
    // Initialize canvas size.
    window.onresize = windowResize;
@@ -47,6 +68,7 @@ window.onload = function() {
    // Load our objects.
    objectQueue (domCrane,    "crane.obj");
    objectQueue (domViewer,   "viewer.obj");
+   objectQueue (domPaint,    "paint.obj");
    objectQueue (domVertex,   "shader.vert");
    objectQueue (domFragment, "shader.frag");
    objectLoad ();
@@ -106,34 +128,46 @@ function objectLoadCallback (url) {
 function objectsDone () {
    // Intialize WebGL.
    try {
-      glInit (domCanvas);
+      glInit ();
    }
    catch (e) {
       errorAddText (e.toString ());
       throw e;
    }
+
+   // Add events to our canvas.
+   domCanvas.addEventListener ("mousedown", canvasMouseDown);
+   domCanvas.addEventListener ("mouseup",   canvasMouseUp);
+   domCanvas.addEventListener ("mousemove", canvasMouseMove);
+   window.addEventListener    ("keydown",   canvasKeyDown);
+   window.addEventListener    ("keyup",     canvasKeyUp);
 }
 
-function glInit (canvas) {
+function glInitContext () {
    // Load a WebGL context.
    try {
-      gl = canvas.getContext ("experimental-webgl");
-      gl.viewportWidth  = canvas.width;
-      gl.viewportHeight = canvas.height;
+      gl = domCanvas.getContext ("experimental-webgl",
+         {preserveDrawingBuffer: true});
+      gl.viewportWidth  = domCanvas.width;
+      gl.viewportHeight = domCanvas.height;
    }
    catch (e) {
       if (!gl)
          errorAddText ("Couldn't load WebGL.");
       throw e;
    }
+}
 
+function glInitShaders () {
    // Load our shaders.
    shaderVertex   = glLoadShader (gl.VERTEX_SHADER,
       domVertex.innerHTML);
    shaderFragment = glLoadShader (gl.FRAGMENT_SHADER,
       domFragment.innerHTML);
    shaderProgram  = glCreateProgram ([shaderVertex, shaderFragment]);
+}
 
+function glInitModels () {
    // Load our crane object.
    modelCrane = new OBJ.Mesh (domCrane.innerHTML);
    OBJ.initMeshBuffers (gl, modelCrane);
@@ -142,12 +176,44 @@ function glInit (canvas) {
    modelViewer = new OBJ.Mesh (domViewer.innerHTML);
    OBJ.initMeshBuffers (gl, modelViewer);
 
-   // Load textures.
-   textureArray.shadow = glLoadTexture ("images/shadow.png");
-   textureArray.paper  = glLoadTexture ("images/paper.jpg");
-   textureArray.fire   = glLoadTexture ("images/fire.jpg");
-   textureArray.UV     = glLoadTexture ("images/uv_map.jpg");
+   // Load our spraypaint object.
+   modelPaint = new OBJ.Mesh (domPaint.innerHTML);
+   OBJ.initMeshBuffers (gl, modelPaint);
+}
 
+function glInitTextures () {
+   // Build our array of textures to load.
+   var modelTexture = glQueueTexture ("fire",   "images/fire.jpg");
+   glQueueTexture ("shadow", "images/shadow.png");
+   glQueueTexture ("paper",  "images/paper.jpg");
+   glQueueTexture ("uv_map", "images/uv_map.jpg");
+   glQueueTexture ("paint",  "images/paint.png");
+
+   // When our main texture finishes, copy it to our framebuffer.
+   modelTexture.whenFinished = function (id, element) {
+      glFramebufferCopyTexture (fbModel, "fire");
+   };
+
+   // Start loading textures.
+   glLoadTextures ();
+}
+
+function glFramebufferCopyTexture (fb, texture) {
+   var matrix = glFramebufferOrtho (fb);
+   gl.bindFramebuffer (gl.FRAMEBUFFER, fb);
+   glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00, glWhite);
+   glDrawObject (modelPaint, { Paint: texture });
+   gl.bindFramebuffer (gl.FRAMEBUFFER, null);
+}
+
+function glInitFramebuffers () {
+   // Create a framebuffer for our screen.
+   fbPicking = glCreateFramebuffer (gl.viewportWidth, gl.viewportHeight, true);
+   fbModel   = glCreateFramebuffer (512, 512, false);
+   textureArray.model = fbModel.texture;
+}
+
+function glInitMatrices () {
    // Draw everything back a bit, rotated downward 30 degrees.
    mat4.identity (matrixModelView);
    var v = vec3.create ();
@@ -159,6 +225,13 @@ function glInit (canvas) {
    // Make sure our normals are adjusted properly.
    glUpdateNormalMatrix ();
 
+   // Set up a generic orthographic matrix.
+   mat4.ortho (matrixOrthographic, -1, 1, 1, -1, -100, 100);
+   mat4.identity (matrixIdentity4);
+   mat3.identity (matrixIdentity3);
+}
+
+function glInitState () {
    // Proper render state.
    gl.enable (gl.DEPTH_TEST);
    gl.depthFunc (gl.LESS);
@@ -166,17 +239,36 @@ function glInit (canvas) {
    gl.cullFace (gl.BACK);
    gl.enable (gl.BLEND);
    gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+}
+
+function glInit () {
+   // Initialize a whole bunch of stuff.
+   glInitContext ();
+   glInitShaders ();
+   glInitModels ();
+   glInitFramebuffers ();
+   glInitTextures ();
+   glInitMatrices ();
+   glInitState ();
 
    // Everything worked!  Activate our screen.
    glInitScreen ();
    glNextFrame (0.00);
 }
 
-function glLoadTexture (url)
+function glQueueTexture (name, url)
 {
+   // Create an image and an OpenGL texture object.
    var element = new Image ();
    var id = gl.createTexture ();
-   id.complete = false;
+
+   // We're going to use the GL object as our reference.
+   // Store valuable info in it.
+   id.url        = url;
+   id.element    = element;
+   id.incomplete = true;
+
+   // Load the image data into the texture object when finished.
    element.onload = function() {
       gl.bindTexture (gl.TEXTURE_2D, id);
       gl.pixelStorei (gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -187,11 +279,46 @@ function glLoadTexture (url)
       gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.bindTexture (gl.TEXTURE_2D, null);
-      id.complete = true;
+      id.incomplete = false;
       glCheckError ();
+
+      // Anything else we need to do here?
+      if (id.whenFinished)
+         id.whenFinished (id, element);
+
+      // Was this the last object?  Yay!
+      textureLoadCount++;
+      if (textureLoadCount == textureLoadTotal)
+         glLoadTexturesDone ();
    }
-   element.src = url;
+
+   // Complain if we can't load the image.
+   element.onerror = function() {
+      errorAddText ("Couldn't load image '" + url + "'");
+   }
+
+   // Store in our texture array.
+   textureArray[name] = id;
    return id;
+}
+
+function glLoadTextures () {
+   // How many textures are we loading?
+   textureLoadTotal = 0;
+   for (var key in textureArray)
+      if (textureArray[key].element)
+         textureLoadTotal++;
+
+   // Queue them all to load.
+   textureLoadCount = 0;
+   for (var key in textureArray) {
+      var e = textureArray[key];
+      if (e.element)
+         e.element.src = e.url;
+   }
+}
+
+function glLoadTexturesDone () {
 }
 
 function glNextFrame (t) {
@@ -208,7 +335,15 @@ function glNextFrame (t) {
    glUpdateNormalMatrix ();
 
    // Redraw our scene.
-   glDrawScene ();
+   if (debugUV)
+      glDrawScene (true);
+   else {
+      glDrawScene (false);
+      gl.bindFramebuffer (gl.FRAMEBUFFER, fbPicking);
+      glDrawScene (true);
+      gl.bindFramebuffer (gl.FRAMEBUFFER, null);
+      glCheckError ();
+   }
    requestAnimationFrame (glNextFrame);
 }
 
@@ -225,8 +360,10 @@ function glInitScreen () {
    mat4.perspective (matrixPerspective, 45.00 / 180.00 * Math.PI,
       r, 1.5, 100.0);
 
-   // Set up our orthographic matrix.
-   mat4.ortho (matrixOrthographic, 1 - (r * 4), 1, 1, -3, -100, 100);
+   // Determine the position of our viewing window.
+   mat4.identity (matrixViewer);
+   mat4.scalar.scale (matrixViewer, matrixViewer, [0.50 / r, 0.50, 0.50]);
+   mat4.scalar.translate (matrixViewer, matrixViewer, [r*2-1, 1.00, 0.00]);
 }
 
 function glUpdateNormalMatrix() {
@@ -237,55 +374,53 @@ function glUpdateNormalMatrix() {
 }
 
 function glCheckError () {
-   var err = gl.getError ();
-   if (err != gl.NO_ERROR) {
+   while (1) {
+      var err = gl.getError ();
+      if (err == gl.NO_ERROR)
+         break;
       console.log (new Error().stack);
    }
 }
 
-function glSetUniforms (viewer) {
-   // Is this our texture viewer?
-   if (viewer) {
-      gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false,
-         matrixOrthographic);
-      gl.uniformMatrix4fv (shaderProgram.uMatrixModelView, false,
-         matrixIdentity4);
-      gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
-         matrixIdentity3);
-      gl.uniform1fv (shaderProgram.uLightIntensity, [0.00]);
-   }
-   // If not, use our standard 3D matrices.
-   else {
-      gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false,
-         matrixPerspective);
-      gl.uniformMatrix4fv (shaderProgram.uMatrixModelView, false,
-         matrixModelView);
-      gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
-         matrixNormal);
-      gl.uniform1fv (shaderProgram.uLightIntensity, [1.00]);
-   }
-
-   // Inform our shader of the time.
+function glSetUniforms (matp, matmv, matn, light, color) {
+   gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false, matp);
+   gl.uniformMatrix4fv (shaderProgram.uMatrixModelView,  false, matmv);
+   gl.uniformMatrix3fv (shaderProgram.uMatrixNormal,     false, matn);
+   gl.uniform1fv (shaderProgram.uLightIntensity, [light]);
    gl.uniform1fv (shaderProgram.uTime, [frameCurrent]);
+   gl.uniform4fv (shaderProgram.uColor, color);
    glCheckError ();
 }
 
-function glDrawScene () {
-   // Black screen.
-   gl.clearColor (0.25, 0.25, 0.25, 1.00);
+function glClearScreen (v, a) {
+   gl.clearColor (v, v, v, a);
    gl.clear (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+}
+
+function glDrawScene (picking) {
+   // Different textures depending on mode.
+   var textures = [], light;
+   if (picking) {
+      glClearScreen (0.00, 0.00);
+      textures.PapelOrigami = "uv_map";
+      light = 0.00;
+   }
+   else {
+      glClearScreen (0.25, 1.00);
+      textures.Sombra       = "shadow";
+      textures.PapelOrigami = "model";
+      light = 1.00;
+   }
 
    // Set our matrices.
-   glSetUniforms (false);
-   glDrawObject (modelCrane, {
-      Sombra:"shadow",
-      PapelOrigami:"fire"});
+   glSetUniforms (matrixPerspective, matrixModelView, matrixNormal, light,
+                  glWhite);
+   glDrawObject (modelCrane, textures);
 
    // Set up an orthographic matrix for our texture viewer.
-   glSetUniforms (true);
-   glDrawObject (modelViewer, {
-      Sombra:"shadow",
-      PapelOrigami:"fire"});
+   glSetUniforms (matrixOrthographic, matrixViewer, matrixIdentity3, 0.00,
+                  glWhite);
+   glDrawObject (modelViewer, textures);
 }
 
 function glDrawObject (obj, textures)
@@ -311,7 +446,7 @@ function glDrawObject (obj, textures)
          continue;
       if (!(t = textures[m]))
          continue;
-      if (!textureArray[t] || !textureArray[t].complete)
+      if (!textureArray[t] || textureArray[t].incomplete)
          continue;
       gl.activeTexture (gl.TEXTURE0);
       gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);
@@ -321,6 +456,51 @@ function glDrawObject (obj, textures)
       gl.drawElements (gl.TRIANGLES, obj.indexBuffer[i].numItems,
          gl.UNSIGNED_SHORT, 0);
    }
+}
+
+function glCreateFramebuffer (width, height, depth) {
+   // Create the framebuffer object and store our dimensions.
+   var fid = gl.createFramebuffer ();
+   gl.bindFramebuffer (gl.FRAMEBUFFER, fid);
+   fid.width  = width;
+   fid.height = height;
+
+   // Attach a texture.
+   var tid = gl.createTexture ();
+   fid.texture = tid;
+   gl.bindTexture (gl.TEXTURE_2D, tid);
+   gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+   gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+   gl.texImage2D (gl.TEXTURE_2D, 0, gl.RGBA, fid.width, fid.height, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+   // Create a render buffer.
+   var rid = gl.createRenderbuffer ();
+   fid.renderBuffer = rid;
+   gl.bindRenderbuffer (gl.RENDERBUFFER, rid);
+   gl.framebufferTexture2D (gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
+      gl.TEXTURE_2D, tid, 0);
+
+   // Do we need a depth buffer?
+   if (depth) {
+      gl.renderbufferStorage (gl.RENDERBUFFER, gl.DEPTH_COMPONENT16,
+         fid.width, fid.height);
+      gl.framebufferRenderbuffer (gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
+         gl.RENDERBUFFER, rid);
+      gl.clear (gl.DEPTH_BUFFER_BIT);
+   }
+
+   // Texture is magenta by default.
+   gl.clearColor (1.00, 0.00, 1.00, 1.00);
+   gl.clear (gl.COLOR_BUFFER_BIT);
+
+   // Unbind.
+   gl.bindTexture      (gl.TEXTURE_2D,   null);
+   gl.bindFramebuffer  (gl.FRAMEBUFFER,  null);
+   gl.bindRenderbuffer (gl.RENDERBUFFER, null);
+
+   // Return our new framebuffer object.
+   return fid;
 }
 
 function glLoadShader (type, source) {
@@ -366,9 +546,20 @@ function glCreateProgram (shaders) {
    id.uTex0             = gl.getUniformLocation (id, "uTex0");
    id.uTime             = gl.getUniformLocation (id, "uTime");
    id.uLightIntensity   = gl.getUniformLocation (id, "uLightIntensity");
+   id.uColor            = gl.getUniformLocation (id, "uColor");
 
    // Return our new object handle.
    return id;
+}
+
+function glFramebufferOrtho (fb) {
+   var m = mat4.create ();
+   var r = gl.viewportWidth / gl.viewportHeight;
+   var dx = ((gl.viewportWidth  - fb.width)  / fb.width) + 1;
+   var dy = ((gl.viewportHeight - fb.height) / fb.height) + 1;
+   mat4.identity (m);
+   mat4.ortho (m, -1, -1 + dx * 2, 1, 1 - dy * 2, -100, 100);
+   return m;
 }
 
 function errorAddText (text) {
@@ -419,4 +610,139 @@ function removeTrailing (string) {
          break;
    }
    return string.substr (0, newLen);
+}
+
+function canvasMouseDown (e) {
+   mouseDown = true;
+   mouseSetCoordinates (this, e);
+   mouseSetLast ();
+   mouseDraw ();
+   event.preventDefault ();
+}
+
+function canvasMouseUp (e) {
+   mouseDown = false;
+   mouseX     = null;
+   mouseY     = null;
+   mouseU     = null;
+   mouseV     = null;
+   mouseLastX = null;
+   mouseLastY = null;
+   mouseLastU = null;
+   mouseLastV = null;
+   event.preventDefault ();
+}
+
+function canvasMouseMove (e) {
+   if (!mouseDown)
+      return;
+   if (!mouseSetCoordinates (this, e))
+      return;
+   mouseDraw ();
+   event.preventDefault ();
+}
+
+function canvasKeyDown (e) {
+        if (e.key == "p") debugUV = true;
+   else if (e.key == "1") {
+      mouseDrawColor = glBlack;
+      glFramebufferCopyTexture (fbModel, "paper");
+   }
+   else if (e.key == "2") {
+      mouseDrawColor = glWhite;
+      glFramebufferCopyTexture (fbModel, "fire");
+   }
+}
+
+function canvasKeyUp (e) {
+   if (e.key == "p")
+      debugUV = false;
+}
+
+function mouseSetCoordinates (element, e)
+{
+   var rect = element.getBoundingClientRect (),
+       x = parseInt (e.clientX - rect.left),
+       y = parseInt (e.clientY - rect.top);
+   var change = true;
+   if (x == mouseX && y == mouseY)
+      change = false;
+   else
+      mouseSetLast ();
+   mouseX = x;
+   mouseY = y;
+   mouseYflip = rect.height - y;
+   return change;
+}
+
+function mouseSetLast ()
+{
+   mouseLastX = mouseX;
+   mouseLastY = mouseY;
+   mouseLastU = mouseU;
+   mouseLastV = mouseV;
+}
+
+var iStep = (mouseDrawSize * 0.25);
+function mouseDraw () {
+   // What is the UV coordinate under the mouse?  Read a pixel from
+   // the picking framebuffer.
+   var pixels = new Uint8Array(4);
+   gl.bindFramebuffer (gl.FRAMEBUFFER, fbPicking);
+   gl.readPixels (mouseX, mouseYflip, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+   gl.bindFramebuffer (gl.FRAMEBUFFER, null);
+   glCheckError ();
+
+   // Do nothing if we're hovering over blank space.
+   if (pixels[3] < 1.00) {
+      mouseU = null;
+      mouseV = null;
+      return;
+   }
+
+   // Determine texture coordinate based on pixel read.
+   mouseU = parseFloat (pixels[0]) / 255.00,
+   mouseV = parseFloat (pixels[1]) / 255.00;
+
+   // Draw a trail.
+   var x = mouseU * 2.00 - 1.00, y = mouseV * 2.00 - 1.00;
+   if (mouseLastU && mouseLastV) {
+      var dist = Math.hypot (mouseU - mouseLastU, mouseV - mouseLastV);
+      if (dist > iStep) {
+         var ix = mouseLastU * 2.00 - 1.00, iy = mouseLastV * 2.00 - 1.00;
+         var ixStep = (x - ix) / dist * iStep, iyStep = (y - iy) / dist * iStep;
+         for (var i = iStep; i < dist; i += iStep) {
+            ix += ixStep;
+            iy += iyStep;
+            mouseDrawAt (ix, iy);
+         }
+      }
+   }
+
+   // Draw our destination.
+   mouseDrawAt (x, y);
+}
+
+function mouseDrawAt (x, y) {
+
+   var ortho = glFramebufferOrtho (fbModel);
+
+   // Set up a matrix for our drawing.
+   var matrix = mat4.create ();
+   mat4.identity (matrix);
+   mat4.scalar.translate (matrix, matrix, [x, y, 1.00]);
+   mat4.scalar.scale     (matrix, matrix, [mouseDrawSize, mouseDrawSize,1.00]);
+   mat4.scalar.translate (matrix, matrix,
+      [0.05 / mouseDrawSize, 0.05 / mouseDrawSize, 0]);
+
+   // Place on paper.
+   glSetUniforms (ortho, matrix, matrixIdentity3, 0.00, mouseDrawColor);
+
+   // Bind our model texture framebuffer and perform a draw.
+   gl.bindFramebuffer (gl.FRAMEBUFFER, fbModel);
+   gl.blendFuncSeparate (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
+                         gl.ONE, gl.ONE);
+   glDrawObject (modelPaint, { Paint: "paint" });
+   gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+   gl.bindFramebuffer (gl.FRAMEBUFFER, null);
 }

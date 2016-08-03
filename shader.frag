@@ -10,9 +10,11 @@ varying float vLight;
 
 uniform sampler2D uTex0;
 uniform float uTime;
+uniform vec4 uColor;
 
 void main (void) {
-   gl_FragColor = texture2D (uTex0, vec2 (vTexcoord0.s, vTexcoord0.t));
+   gl_FragColor = texture2D (uTex0, vec2 (vTexcoord0.s, vTexcoord0.t))
+      * uColor;
 
    /* crystal-like colors and refraction. */
 #if 0
