@@ -673,22 +673,36 @@ function mouseSetCoordinates (element, e)
 {
    var rect = element.getBoundingClientRect ();
    var x, y;
+
+   // Is there a touch event?
+   if (e.touches)
+      e = e.touches[0];
+
+   // Prioritize using clientX, if available.
    if (e.clientX != undefined) {
       x = parseInt (e.clientX - rect.left);
       y = parseInt (e.clientY - rect.top);
    }
-   else {
+   else if (e.pageX != undefined) {
       x = parseInt (e.pageX - rect.left) - (window.pageXOffset),
       y = parseInt (e.pageY - rect.top)  - (window.pageYOffset);
    }
+   else
+      return;
+
+   // We have the coordinates.  Have they changed?
    var change = true;
    if (x == mouseX && y == mouseY)
       change = false;
-   else
+   // Different coordinates - update our 'last coordinates' and current ones.
+   else {
       mouseSetLast ();
-   mouseX = x;
-   mouseY = y;
-   mouseYflip = rect.height - y;
+      mouseX = x;
+      mouseY = y;
+      mouseYflip = rect.height - y;
+   }
+
+   // Return whether or not we changed.
    return change;
 }
 
