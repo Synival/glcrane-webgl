@@ -140,7 +140,7 @@ function glInit (canvas) {
 
    // Load textures.
    textureArray.push (glLoadTexture ("images/shadow.png"));
-   textureArray.push (glLoadTexture ("images/paper.jpg"));
+   textureArray.push (glLoadTexture ("images/fire.jpg"));
 
    // Draw everything back a bit, rotated downward 30 degrees.
    mat4.identity (matrixModelView);
