@@ -12,8 +12,8 @@ uniform sampler2D uTex0;
 
 void main (void) {
    gl_FragColor = texture2D (uTex0, vTexcoord0);
-   gl_FragColor.rgb *= vec3 (
+   gl_FragColor.rgb *= mix (vec3 (vLight, vLight, vLight), vec3 (
       sin ((vLight + 0.00) * 6.283) * 0.50 + 0.50,
       sin ((vLight + 0.33) * 6.283) * 0.50 + 0.50,
-      sin ((vLight + 0.66) * 6.283) * 0.50 + 0.50);
+      sin ((vLight + 0.66) * 6.283) * 0.50 + 0.50), 0.25);
 }
