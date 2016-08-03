@@ -143,8 +143,10 @@ function glInit (canvas) {
    OBJ.initMeshBuffers (gl, modelViewer);
 
    // Load textures.
-   textureArray.push (glLoadTexture ("images/shadow.png"));
-   textureArray.push (glLoadTexture ("images/fire.jpg"));
+   textureArray.shadow = glLoadTexture ("images/shadow.png");
+   textureArray.paper  = glLoadTexture ("images/paper.jpg");
+   textureArray.fire   = glLoadTexture ("images/fire.jpg");
+   textureArray.UV     = glLoadTexture ("images/uv_map.jpg");
 
    // Draw everything back a bit, rotated downward 30 degrees.
    mat4.identity (matrixModelView);
@@ -275,14 +277,18 @@ function glDrawScene () {
 
    // Set our matrices.
    glSetUniforms (false);
-   glDrawObject (modelCrane, 0);
+   glDrawObject (modelCrane, {
+      Sombra:"shadow",
+      PapelOrigami:"fire"});
 
    // Set up an orthographic matrix for our texture viewer.
    glSetUniforms (true);
-   glDrawObject (modelViewer, 1);
+   glDrawObject (modelViewer, {
+      Sombra:"shadow",
+      PapelOrigami:"fire"});
 }
 
-function glDrawObject (obj, texOffset)
+function glDrawObject (obj, textures)
 {
    // Bind vertex positions.
    gl.bindBuffer (gl.ARRAY_BUFFER, obj.vertexBuffer);
@@ -301,8 +307,11 @@ function glDrawObject (obj, texOffset)
 
    // Draw all objects.
    for (var i = 0; i < obj.objects; i++) {
-      var t = (i + texOffset) % textureArray.length;
-      if (!textureArray[t].complete)
+      if (!(m = obj.materials[i]))
+         continue;
+      if (!(t = textures[m]))
+         continue;
+      if (!textureArray[t] || !textureArray[t].complete)
          continue;
       gl.activeTexture (gl.TEXTURE0);
       gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);

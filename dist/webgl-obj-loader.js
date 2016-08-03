@@ -90,6 +90,7 @@
      that group and is appended to the unpacked indices array.
      */
     var verts = [], vertNormals = [], textures = [], unpacked = {};
+    var material = null;
     // unpacking stuff
     unpacked.verts = [];
     unpacked.norms = [];
@@ -100,6 +101,7 @@
     // array of lines separated by the newline
     var lines = objectData.split('\n');
 
+    var USEMTL_RE = /^usemtl\s/;
     var VERTEX_RE = /^v\s/;
     var NORMAL_RE = /^vn\s/;
     var TEXTURE_RE = /^vt\s/;
@@ -108,8 +110,9 @@
     var OBJECT_RE = /^o\s/;
 
     // empty array for object indices.
-    this.objects = 0;
-    this.indices = [];
+    this.objects   = 0;
+    this.indices   = [];
+    this.materials = [];
 
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].trim();
@@ -209,20 +212,29 @@
             }
         }
       }
-      else if (OBJECT_RE.test (line))
-        _addObject (this, unpacked);
+      else if (OBJECT_RE.test (line)) {
+        // add a new object if we can.
+        _addObject (this, unpacked, material);
+      }
+      else if (USEMTL_RE.test(line)) {
+        // record what material we're using. start a new object if the
+        // material changed.
+        material = elements[0];
+        _addObject (this, unpacked, material);
+      }
     }
-    _addObject (this, unpacked);
+    _addObject (this, unpacked, material);
     this.vertices      = unpacked.verts;
     this.vertexNormals = unpacked.norms;
     this.textures      = unpacked.textures;
   }
 
-  var _addObject = function (mesh, unpacked) {
+  var _addObject = function (mesh, unpacked, material) {
     if (unpacked.indices.length == 0)
       return;
     mesh.objects++;
     mesh.indices.push (unpacked.indices);
+    mesh.materials.push (material);
     unpacked.indices = [];
   }
 
