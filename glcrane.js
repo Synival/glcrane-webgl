@@ -623,12 +623,12 @@ function canvasMouseDown (e) {
    if (!mouseDraw ())
       mouseDownOff ();
    else
-      event.preventDefault ();
+      e.preventDefault ();
 }
 
 function canvasMouseUp (e) {
    mouseDownOff ();
-   event.preventDefault ();
+   e.preventDefault ();
 }
 
 function mouseDownOff () {
@@ -649,7 +649,7 @@ function canvasMouseMove (e) {
    if (!mouseSetCoordinates (this, e))
       return;
    mouseDraw ();
-   event.preventDefault ();
+   e.preventDefault ();
 }
 
 function canvasKeyDown (e) {
