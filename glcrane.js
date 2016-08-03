@@ -250,6 +250,7 @@ function glSetUniforms (viewer) {
          matrixIdentity4);
       gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
          matrixIdentity3);
+      gl.uniform1fv (shaderProgram.uLightIntensity, [0.00]);
    }
    // If not, use our standard 3D matrices.
    else {
@@ -259,6 +260,7 @@ function glSetUniforms (viewer) {
          matrixModelView);
       gl.uniformMatrix3fv (shaderProgram.uMatrixNormal, false,
          matrixNormal);
+      gl.uniform1fv (shaderProgram.uLightIntensity, [1.00]);
    }
 
    // Inform our shader of the time.
@@ -354,6 +356,7 @@ function glCreateProgram (shaders) {
    id.uMatrixNormal     = gl.getUniformLocation (id, "uMatrixNormal");
    id.uTex0             = gl.getUniformLocation (id, "uTex0");
    id.uTime             = gl.getUniformLocation (id, "uTime");
+   id.uLightIntensity   = gl.getUniformLocation (id, "uLightIntensity");
 
    // Return our new object handle.
    return id;
