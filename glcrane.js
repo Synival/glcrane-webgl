@@ -18,7 +18,7 @@ var shaderNormalVertex,  shaderNormalFragment,  shaderNormalProgram,
     shaderProgram;
 var matrixPerspective,  matrixModelView, matrixNormal,
     matrixOrthographic, matrixIdentity4, matrixIdentity3,
-    matrixViewer, matrixUV;
+    matrixViewer;
 var textureArray = [];
 var fbPicking, fbModel, fbCurrent = null;
 var colorWhite = [1.00, 1.00, 1.00, 1.00],
@@ -66,7 +66,6 @@ window.onload = function() {
    matrixIdentity4    = mat4.create ();
    matrixIdentity3    = mat3.create ();
    matrixViewer       = mat4.create ();
-   matrixUV           = mat4.create ();
 
    // Initialize canvas size.
    window.onresize = windowResize;
@@ -425,9 +424,6 @@ function glInitScreen () {
    mat4.identity (matrixViewer);
    mat4.scalar.scale (matrixViewer, matrixViewer, [0.50 / r, 0.50, 0.50]);
    mat4.scalar.translate (matrixViewer, matrixViewer, [r*2-1, 1.00, 0.00]);
-
-   // Determine the UV preview window location.
-   mat4.scalar.translate (matrixUV, matrixViewer, [(r*2-1) * -2.00, 0, 0]);
 }
 
 function glUpdateNormalMatrix() {
@@ -491,12 +487,6 @@ function glDrawScene (picking) {
    glSetUniforms (matrixOrthographic, matrixViewer, matrixIdentity3, 0.00,
       null);
    glDrawObject (modelViewer, textures);
-
-   // Draw our RGB->UV layout.
-   if (fbCurrent == null) {
-      glSetUniforms (null, matrixUV, null, null, null);
-      glDrawObject (modelViewer, { PapelOrigami: "uv" });
-   }
 }
 
 function glDrawObject (obj, textures)
