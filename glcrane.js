@@ -1,6 +1,7 @@
 // DOM elements to be linked in window.onload().
-var domCanvas, domCrane, domViewer, domPaint, domVertex, domFragment,
-    domOuter, domErrors;
+var domCanvas, domCrane, domViewer, domPaint, domNormalVertex,
+    domNormalFragment, domOuter, domErrors, domConvertVertex,
+    domConvertFragment;
 
 // Generic object/texture loading.
 var objectLoadCount, objectLoadTotal, objectLoadQueue = [];
@@ -12,13 +13,16 @@ var modelCrane, modelViewer, modelPaint;
 
 // WebGL context, shaders, attributes, matrices, etc.
 var gl;
-var shaderVertex, shaderFragment, shaderProgram;
+var shaderNormalVertex,  shaderNormalFragment,  shaderNormalProgram,
+    shaderConvertVertex, shaderConvertFragment, shaderConvertProgram,
+    shaderProgram;
 var matrixPerspective,  matrixModelView, matrixNormal,
     matrixOrthographic, matrixIdentity4, matrixIdentity3,
-    matrixViewer;
+    matrixViewer, matrixUV;
 var textureArray = [];
-var fbPicking, fbModel;
-var glWhite = [1.00, 1.00, 1.00, 1.00], glBlack = [0.00, 0.00, 0.00, 1.00];
+var fbPicking, fbModel, fbCurrent = null;
+var colorWhite = [1.00, 1.00, 1.00, 1.00],
+    colorBlack = [0.00, 0.00, 0.00, 1.00];
 
 // Animation and frame data.
 var frameLast    = 0.00;
@@ -26,7 +30,7 @@ var frameCurrent = 0.00;
 var frameT       = 0.00;
 
 // Spraypainting stuff.
-var mouseDrawColor = glWhite;
+var mouseDrawColor = colorWhite;
 var mouseDrawSize  = 0.05;
 var mouseDown      = false;
 var mouseX         = null;
@@ -43,14 +47,16 @@ var debugUV    = false;
 // Our program starts here.
 window.onload = function() {
    // Now our DOM is ready, Link elements to variables.
-   domCanvas    = document.getElementById ("canvas");
-   domCrane     = document.getElementById ("crane");
-   domViewer    = document.getElementById ("viewer");
-   domPaint     = document.getElementById ("paint");
-   domVertex    = document.getElementById ("vertex");
-   domFragment  = document.getElementById ("fragment");
-   domOuter     = document.getElementById ("outer");
-   domErrors    = document.getElementById ("errors");
+   domCanvas          = document.getElementById ("canvas");
+   domCrane           = document.getElementById ("crane");
+   domViewer          = document.getElementById ("viewer");
+   domPaint           = document.getElementById ("paint");
+   domNormalVertex    = document.getElementById ("normal_vertex");
+   domNormalFragment  = document.getElementById ("normal_fragment");
+   domConvertVertex   = document.getElementById ("convert_vertex");
+   domConvertFragment = document.getElementById ("convert_fragment");
+   domOuter           = document.getElementById ("outer");
+   domErrors          = document.getElementById ("errors");
 
    // Initialize matrices.
    matrixPerspective  = mat4.create ();
@@ -60,17 +66,20 @@ window.onload = function() {
    matrixIdentity4    = mat4.create ();
    matrixIdentity3    = mat3.create ();
    matrixViewer       = mat4.create ();
+   matrixUV           = mat4.create ();
 
    // Initialize canvas size.
    window.onresize = windowResize;
    windowResize ();
 
    // Load our objects.
-   objectQueue (domCrane,    "crane.obj");
-   objectQueue (domViewer,   "viewer.obj");
-   objectQueue (domPaint,    "paint.obj");
-   objectQueue (domVertex,   "shader.vert");
-   objectQueue (domFragment, "shader.frag");
+   objectQueue (domCrane,           "crane.obj");
+   objectQueue (domViewer,          "viewer.obj");
+   objectQueue (domPaint,           "paint.obj");
+   objectQueue (domNormalVertex,    "normal.vert");
+   objectQueue (domNormalFragment,  "normal.frag");
+   objectQueue (domConvertVertex,   "convert.vert");
+   objectQueue (domConvertFragment, "convert.frag");
    objectLoad ();
 }
 
@@ -150,8 +159,7 @@ function objectsDone () {
 function glInitContext () {
    // Load a WebGL context.
    try {
-      gl = domCanvas.getContext ("experimental-webgl",
-         {preserveDrawingBuffer: true});
+      gl = domCanvas.getContext ("experimental-webgl");
       gl.viewportWidth  = domCanvas.width;
       gl.viewportHeight = domCanvas.height;
    }
@@ -163,12 +171,57 @@ function glInitContext () {
 }
 
 function glInitShaders () {
-   // Load our shaders.
-   shaderVertex   = glLoadShader (gl.VERTEX_SHADER,
-      domVertex.innerHTML);
-   shaderFragment = glLoadShader (gl.FRAGMENT_SHADER,
-      domFragment.innerHTML);
-   shaderProgram  = glCreateProgram ([shaderVertex, shaderFragment]);
+   // Load our normal shader.
+   shaderNormalVertex = glLoadShader (gl.VERTEX_SHADER,
+      domNormalVertex.innerHTML);
+   shaderNormalFragment = glLoadShader (gl.FRAGMENT_SHADER,
+      domNormalFragment.innerHTML);
+   shaderNormalProgram  = glCreateProgram (
+      [shaderNormalVertex, shaderNormalFragment]);
+
+   // Get and enable vertex attributes.
+   var id = shaderNormalProgram;
+   gl.useProgram (id);
+   id.aPosition  = gl.getAttribLocation (id, "aPosition");
+   id.aNormal    = gl.getAttribLocation (id, "aNormal");
+   id.aTexcoord0 = gl.getAttribLocation (id, "aTexcoord0");
+   gl.enableVertexAttribArray (id.aPosition);
+   gl.enableVertexAttribArray (id.aNormal);
+   gl.enableVertexAttribArray (id.aTexcoord0);
+
+   // Get uniform locations.
+   id.uMatrixProjection = gl.getUniformLocation (id, "uMatrixProjection");
+   id.uMatrixModelView  = gl.getUniformLocation (id, "uMatrixModelView");
+   id.uMatrixNormal     = gl.getUniformLocation (id, "uMatrixNormal");
+   id.uTex0             = gl.getUniformLocation (id, "uTex0");
+   id.uTime             = gl.getUniformLocation (id, "uTime");
+   id.uLightIntensity   = gl.getUniformLocation (id, "uLightIntensity");
+   id.uColor            = gl.getUniformLocation (id, "uColor");
+
+   // Load our RGB->XYV conversion shader shader.
+   shaderConvertVertex = glLoadShader (gl.VERTEX_SHADER,
+      domConvertVertex.innerHTML);
+   shaderConvertFragment = glLoadShader (gl.FRAGMENT_SHADER,
+      domConvertFragment.innerHTML);
+   shaderConvertProgram  = glCreateProgram (
+      [shaderConvertVertex, shaderConvertFragment]);
+
+   // Get and enable vertex attributes.
+   var id = shaderConvertProgram;
+   gl.useProgram (id);
+   id.aPosition  = gl.getAttribLocation (id, "aPosition");
+   id.aTexcoord0 = gl.getAttribLocation (id, "aTexcoord0");
+   gl.enableVertexAttribArray (id.aPosition);
+   gl.enableVertexAttribArray (id.aTexcoord0);
+
+   // Get uniform locations.
+   id.uMatrixProjection = gl.getUniformLocation (id, "uMatrixProjection");
+   id.uMatrixModelView  = gl.getUniformLocation (id, "uMatrixModelView");
+   id.uTex0             = gl.getUniformLocation (id, "uTex0");
+   id.uColor            = gl.getUniformLocation (id, "uColor");
+
+   // Use our 'normal' program.
+   glUseProgram (shaderNormalProgram);
 }
 
 function glInitModels () {
@@ -204,16 +257,18 @@ function glInitTextures () {
 
 function glFramebufferCopyTexture (fb, texture) {
    var matrix = glFramebufferOrtho (fb);
-   gl.bindFramebuffer (gl.FRAMEBUFFER, fb);
-   glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00, glWhite);
+   glUseFramebuffer (fb);
+   glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00, colorWhite);
    glDrawObject (modelPaint, { Paint: texture });
-   gl.bindFramebuffer (gl.FRAMEBUFFER, null);
+   glUseFramebuffer (null);
 }
 
 function glInitFramebuffers () {
-   // Create a framebuffer for our screen.
+   // Screen-sized framebuffer used for UV picking.
    fbPicking = glCreateFramebuffer (gl.viewportWidth, gl.viewportHeight, true);
-   fbModel   = glCreateFramebuffer (512, 512, false);
+
+   // Our model's texture.
+   fbModel = glCreateFramebuffer (512, 512, false);
    textureArray.model = fbModel.texture;
 }
 
@@ -239,8 +294,10 @@ function glInitState () {
    // Proper render state.
    gl.enable (gl.DEPTH_TEST);
    gl.depthFunc (gl.LESS);
+/*
    gl.enable (gl.CULL_FACE);
    gl.cullFace (gl.BACK);
+*/
    gl.enable (gl.BLEND);
    gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 }
@@ -343,9 +400,9 @@ function glNextFrame (t) {
       glDrawScene (true);
    else {
       glDrawScene (false);
-      gl.bindFramebuffer (gl.FRAMEBUFFER, fbPicking);
+      glUseFramebuffer (fbPicking);
       glDrawScene (true);
-      gl.bindFramebuffer (gl.FRAMEBUFFER, null);
+      glUseFramebuffer (null);
       glCheckError ();
    }
    requestAnimationFrame (glNextFrame);
@@ -368,6 +425,9 @@ function glInitScreen () {
    mat4.identity (matrixViewer);
    mat4.scalar.scale (matrixViewer, matrixViewer, [0.50 / r, 0.50, 0.50]);
    mat4.scalar.translate (matrixViewer, matrixViewer, [r*2-1, 1.00, 0.00]);
+
+   // Determine the UV preview window location.
+   mat4.scalar.translate (matrixUV, matrixViewer, [(r*2-1) * -2.00, 0, 0]);
 }
 
 function glUpdateNormalMatrix() {
@@ -387,12 +447,18 @@ function glCheckError () {
 }
 
 function glSetUniforms (matp, matmv, matn, light, color) {
-   gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false, matp);
-   gl.uniformMatrix4fv (shaderProgram.uMatrixModelView,  false, matmv);
-   gl.uniformMatrix3fv (shaderProgram.uMatrixNormal,     false, matn);
-   gl.uniform1fv (shaderProgram.uLightIntensity, [light]);
-   gl.uniform1fv (shaderProgram.uTime, [frameCurrent]);
-   gl.uniform4fv (shaderProgram.uColor, color);
+   if (shaderProgram.uMatrixProjection && matp != null)
+      gl.uniformMatrix4fv (shaderProgram.uMatrixProjection, false, matp);
+   if (shaderProgram.uMatrixModelView && matmv != null)
+      gl.uniformMatrix4fv (shaderProgram.uMatrixModelView,  false, matmv);
+   if (shaderProgram.uMatrixNormal && matn != null)
+      gl.uniformMatrix3fv (shaderProgram.uMatrixNormal,     false, matn);
+   if (shaderProgram.uLightIntensity && light != null)
+      gl.uniform1fv (shaderProgram.uLightIntensity, [light]);
+   if (shaderProgram.uTime && frameCurrent != null)
+      gl.uniform1fv (shaderProgram.uTime, [frameCurrent]);
+   if (shaderProgram.uColor && color != null)
+      gl.uniform4fv (shaderProgram.uColor, color);
    glCheckError ();
 }
 
@@ -416,33 +482,50 @@ function glDrawScene (picking) {
       light = 1.00;
    }
 
-   // Set our matrices.
+   // Draw our crane in perspective space.
    glSetUniforms (matrixPerspective, matrixModelView, matrixNormal, light,
-                  glWhite);
+      colorWhite);
    glDrawObject (modelCrane, textures);
 
-   // Set up an orthographic matrix for our texture viewer.
+   // Draw our texture in orthographic space.
    glSetUniforms (matrixOrthographic, matrixViewer, matrixIdentity3, 0.00,
-                  glWhite);
+      null);
    glDrawObject (modelViewer, textures);
+
+   // Draw our RGB->UV layout.
+   if (fbCurrent == null) {
+      glSetUniforms (null, matrixUV, null, null, null);
+      glDrawObject (modelViewer, { PapelOrigami: "uv" });
+   }
 }
 
 function glDrawObject (obj, textures)
 {
+   glCheckError ();
+
    // Bind vertex positions.
-   gl.bindBuffer (gl.ARRAY_BUFFER, obj.vertexBuffer);
-   gl.vertexAttribPointer (shaderProgram.aPosition,
-      obj.vertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
+   if (shaderProgram.aPosition >= 0) {
+      gl.bindBuffer (gl.ARRAY_BUFFER, obj.vertexBuffer);
+      gl.vertexAttribPointer (shaderProgram.aPosition,
+         obj.vertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
+      glCheckError ();
+   }
 
    // Bind vertex normals.
-   gl.bindBuffer (gl.ARRAY_BUFFER, obj.normalBuffer);
-   gl.vertexAttribPointer (shaderProgram.aNormal,
-      obj.normalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+   if (shaderProgram.aNormal >= 0) {
+      gl.bindBuffer (gl.ARRAY_BUFFER, obj.normalBuffer);
+      gl.vertexAttribPointer (shaderProgram.aNormal,
+         obj.normalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+      glCheckError ();
+   }
 
    // Bind texture coordinates.
-   gl.bindBuffer (gl.ARRAY_BUFFER, obj.textureBuffer);
-   gl.vertexAttribPointer (shaderProgram.aTexcoord0,
-      obj.textureBuffer.itemSize, gl.FLOAT, false, 0, 0);
+   if (shaderProgram.aTexcoord0 >= 0) {
+      gl.bindBuffer (gl.ARRAY_BUFFER, obj.textureBuffer);
+      gl.vertexAttribPointer (shaderProgram.aTexcoord0,
+         obj.textureBuffer.itemSize, gl.FLOAT, false, 0, 0);
+      glCheckError ();
+   }
 
    // Draw all objects.
    for (var i = 0; i < obj.objects; i++) {
@@ -452,20 +535,23 @@ function glDrawObject (obj, textures)
          continue;
       if (!textureArray[t] || textureArray[t].incomplete)
          continue;
-      gl.activeTexture (gl.TEXTURE0);
-      gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);
-      gl.uniform1i (shaderProgram.uTex0, 0);
-
+      if (shaderProgram.uTex0) {
+         gl.activeTexture (gl.TEXTURE0);
+         gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);
+         gl.uniform1i (shaderProgram.uTex0, 0);
+         glCheckError ();
+      }
       gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, obj.indexBuffer[i]);
       gl.drawElements (gl.TRIANGLES, obj.indexBuffer[i].numItems,
          gl.UNSIGNED_SHORT, 0);
+      glCheckError ();
    }
 }
 
 function glCreateFramebuffer (width, height, depth) {
    // Create the framebuffer object and store our dimensions.
    var fid = gl.createFramebuffer ();
-   gl.bindFramebuffer (gl.FRAMEBUFFER, fid);
+   glUseFramebuffer (fid);
    fid.width  = width;
    fid.height = height;
 
@@ -499,8 +585,8 @@ function glCreateFramebuffer (width, height, depth) {
    gl.clear (gl.COLOR_BUFFER_BIT);
 
    // Unbind.
+   glUseFramebuffer (null);
    gl.bindTexture      (gl.TEXTURE_2D,   null);
-   gl.bindFramebuffer  (gl.FRAMEBUFFER,  null);
    gl.bindRenderbuffer (gl.RENDERBUFFER, null);
 
    // Return our new framebuffer object.
@@ -534,24 +620,6 @@ function glCreateProgram (shaders) {
    if (!gl.getProgramParameter (id, gl.LINK_STATUS))
       throw new String("Couldn't link program");
 
-   // Get and enable vertex attributes.
-   gl.useProgram (id);
-   id.aPosition  = gl.getAttribLocation (id, "aPosition");
-   id.aNormal    = gl.getAttribLocation (id, "aNormal");
-   id.aTexcoord0 = gl.getAttribLocation (id, "aTexcoord0");
-   gl.enableVertexAttribArray (id.aPosition);
-   gl.enableVertexAttribArray (id.aNormal);
-   gl.enableVertexAttribArray (id.aTexcoord0);
-
-   // Get uniform locations.
-   id.uMatrixProjection = gl.getUniformLocation (id, "uMatrixProjection");
-   id.uMatrixModelView  = gl.getUniformLocation (id, "uMatrixModelView");
-   id.uMatrixNormal     = gl.getUniformLocation (id, "uMatrixNormal");
-   id.uTex0             = gl.getUniformLocation (id, "uTex0");
-   id.uTime             = gl.getUniformLocation (id, "uTime");
-   id.uLightIntensity   = gl.getUniformLocation (id, "uLightIntensity");
-   id.uColor            = gl.getUniformLocation (id, "uColor");
-
    // Return our new object handle.
    return id;
 }
@@ -564,6 +632,16 @@ function glFramebufferOrtho (fb) {
    mat4.identity (m);
    mat4.ortho (m, -1, -1 + dx * 2, 1, 1 - dy * 2, -100, 100);
    return m;
+}
+
+function glUseProgram (shader) {
+   gl.useProgram (shader);
+   shaderProgram = shader;
+}
+
+function glUseFramebuffer (fb) {
+   gl.bindFramebuffer (gl.FRAMEBUFFER, fb);
+   fbCurrent = fb;
 }
 
 function errorAddText (text) {
@@ -655,11 +733,11 @@ function canvasMouseMove (e) {
 function canvasKeyDown (e) {
         if (e.key == "p") debugUV = true;
    else if (e.key == "1") {
-      mouseDrawColor = glBlack;
+      mouseDrawColor = colorBlack;
       glFramebufferCopyTexture (fbModel, "paper");
    }
    else if (e.key == "2") {
-      mouseDrawColor = glWhite;
+      mouseDrawColor = colorWhite;
       glFramebufferCopyTexture (fbModel, "fire");
    }
 }
@@ -706,16 +784,91 @@ function mouseSetCoordinates (element, e)
    return change;
 }
 
-function mouseSetLast ()
-{
+function mouseSetLast () {
    mouseLastX = mouseX;
    mouseLastY = mouseY;
    mouseLastU = mouseU;
    mouseLastV = mouseV;
 }
 
+function mouseDrawVertexBuffer (w, h) {
+   var id = gl.createBuffer ();
+   id.itemSize = 4;
+   gl.bindBuffer (gl.ARRAY_BUFFER, id);
+   gl.vertexAttribPointer (shaderConvertProgram.aPosition,
+      id.itemSize, gl.FLOAT, false, 0, 0);
+   return id;
+}
+
+function mouseDrawIndexBuffer (w, h) {
+   // Create all of our polygons.
+   var x, y, array = [], count = 0, pos = 0;
+   for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++, pos += 4) {
+         if (Math.hypot ((x / w) - 0.50, (y / h) - 0.50) > 0.50)
+            continue;
+         array.push (pos + 0, pos + 1, pos + 3,
+                     pos + 1, pos + 3, pos + 2);
+         count += 6;
+      }
+   }
+
+   // Put them into a buffer.
+   var id = gl.createBuffer ();
+   gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, id);
+   gl.bufferData (gl.ELEMENT_ARRAY_BUFFER, new Uint16Array (array),
+      gl.STATIC_DRAW);
+   id.numItems = count;
+
+   // Return our new buffer.
+   return id;
+}
+
+function mouseDrawTexcoordBuffer (w, h) {
+   var id = gl.createBuffer ();
+   id.itemSize = 2;
+   gl.bindBuffer (gl.ARRAY_BUFFER, id);
+   gl.vertexAttribPointer (shaderConvertProgram.aTexcoord0,
+      id.itemSize, gl.FLOAT, false, 0, 0);
+
+   // Populate our buffer.
+   var array = new Float32Array (w * h * 2 * 4),
+       wh24 = w * h * 2 * 4;
+   for (var i = 0; i < wh24; i += 8) {
+      array[i + 0] = 0.00;
+      array[i + 1] = 0.00;
+      array[i + 2] = 1.00;
+      array[i + 3] = 0.00;
+      array[i + 4] = 1.00;
+      array[i + 5] = 1.00;
+      array[i + 6] = 0.00;
+      array[i + 7] = 1.00;
+   }
+   gl.bufferData (gl.ARRAY_BUFFER, array, gl.STATIC_DRAW);
+
+   return id;
+}
+
+var mdVertexBuffer   = undefined;
+var mdIndexBuffer    = undefined;
+var mdTexcoordBuffer = undefined;
+function mouseDrawBuffers (w, h, pixelsf) {
+   // Make sure we have our buffer + indices.
+   gl.useProgram (shaderConvertProgram);
+   if (!mdVertexBuffer)   mdVertexBuffer   = mouseDrawVertexBuffer   (w, h);
+   if (!mdIndexBuffer)    mdIndexBuffer    = mouseDrawIndexBuffer    (w, h);
+   if (!mdTexcoordBuffer) mdTexcoordBuffer = mouseDrawTexcoordBuffer (w, h);
+
+   // Populate our buffer with the correct data.
+   gl.bindBuffer (gl.ARRAY_BUFFER, mdVertexBuffer);
+   gl.bufferData (gl.ARRAY_BUFFER, pixelsf, gl.STREAM_DRAW);
+   gl.useProgram (shaderProgram);
+}
+
 var iStep = (mouseDrawSize * 0.25);
 function mouseDraw () {
+   return mouseDrawAt (mouseX, mouseY);
+/*
    // What is the UV coordinate under the mouse?  Read a pixel from
    // the picking framebuffer.
    var pixels = new Uint8Array(4);
@@ -757,10 +910,78 @@ function mouseDraw () {
    // Draw our destination.
    mouseDrawAt (x, y);
    return count + 1;
+*/
 }
 
 function mouseDrawAt (x, y) {
+   // Get the area we're drawing.
+   var h = parseInt (gl.viewportHeight / 32.00), w = h,
+       wh = w * h, wh4 = wh * 4, wh44 = wh4 * 4;
 
+   var pixels = new Uint8Array (wh4);
+   glUseFramebuffer (fbPicking);
+   gl.readPixels (mouseX - w/2, mouseYflip - h/2, w, h, gl.RGBA,
+      gl.UNSIGNED_BYTE, pixels);
+   var pixelsf = new Float32Array (wh44);
+   var i, j, k;
+
+   var pw = 0.015625, pw2 = pw * 2;
+   for (i = 0, j = 0; i < wh4; i += 4, j += 16) {
+      pixelsf[j +  0] = pixels[i + 0] / 128.00 - 1.00 - pw;
+      pixelsf[j +  1] = pixels[i + 1] / 128.00 - 1.00 - pw;
+      pixelsf[j +  2] = pixels[i + 2] / 255.00;
+      pixelsf[j +  3] = pixels[i + 3] / 255.00;
+
+      pixelsf[j +  4] = pixelsf[j + 0] + pw2;
+      pixelsf[j +  5] = pixelsf[j + 1];
+      pixelsf[j +  6] = pixelsf[j + 2];
+      pixelsf[j +  7] = pixelsf[j + 3];
+
+      pixelsf[j +  8] = pixelsf[j + 0] + pw2;
+      pixelsf[j +  9] = pixelsf[j + 1] + pw2;
+      pixelsf[j + 10] = pixelsf[j + 2];
+      pixelsf[j + 11] = pixelsf[j + 3];
+
+      pixelsf[j + 12] = pixelsf[j + 0];
+      pixelsf[j + 13] = pixelsf[j + 1] + pw2;
+      pixelsf[j + 14] = pixelsf[j + 2];
+      pixelsf[j + 15] = pixelsf[j + 3];
+   }
+
+   // Initialize all the buffers we need to draw.
+   mouseDrawBuffers (w, h, pixelsf);
+
+   glUseProgram (shaderConvertProgram);
+   glUseFramebuffer (fbModel);
+
+      var matrix = glFramebufferOrtho (fbModel);
+      glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00,
+         mouseDrawColor);
+      gl.activeTexture (gl.TEXTURE0);
+      gl.bindTexture (gl.TEXTURE_2D, textureArray.paint);
+      gl.uniform1i (shaderProgram.uTex0, 0);
+
+      gl.bindBuffer (gl.ARRAY_BUFFER, mdVertexBuffer);
+      gl.vertexAttribPointer (shaderProgram.aPosition,
+         mdVertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer (gl.ARRAY_BUFFER, mdTexcoordBuffer);
+      gl.vertexAttribPointer (shaderProgram.aTexcoord0,
+         mdTexcoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+      gl.blendFuncSeparate (gl.ONE, gl.ONE_MINUS_SRC_ALPHA,
+         gl.ONE, gl.ONE);
+      gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, mdIndexBuffer);
+      gl.drawElements (gl.TRIANGLES, mdIndexBuffer.numItems,
+         gl.UNSIGNED_SHORT, 0);
+      gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      glCheckError ();
+
+   glUseFramebuffer (null);
+   glUseProgram (shaderNormalProgram);
+
+   return 1;
+/*
    var ortho = glFramebufferOrtho (fbModel);
 
    // Set up a matrix for our drawing.
@@ -775,10 +996,11 @@ function mouseDrawAt (x, y) {
    glSetUniforms (ortho, matrix, matrixIdentity3, 0.00, mouseDrawColor);
 
    // Bind our model texture framebuffer and perform a draw.
-   gl.bindFramebuffer (gl.FRAMEBUFFER, fbModel);
+   glUseFramebuffer (fbModel);
    gl.blendFuncSeparate (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
                          gl.ONE, gl.ONE);
    glDrawObject (modelPaint, { Paint: "paint" });
    gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-   gl.bindFramebuffer (gl.FRAMEBUFFER, null);
+   glUseFramebuffer (null);
+*/
 }
