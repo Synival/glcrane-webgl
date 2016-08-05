@@ -90,7 +90,7 @@
      that group and is appended to the unpacked indices array.
      */
     var verts = [], vertNormals = [], textures = [], unpacked = {};
-    var material = null;
+    var material = "default";
     // unpacking stuff
     unpacked.verts = [];
     unpacked.norms = [];
@@ -219,8 +219,8 @@
       else if (USEMTL_RE.test(line)) {
         // record what material we're using. start a new object if the
         // material changed.
-        material = elements[0];
         _addObject (this, unpacked, material);
+        material = elements[0];
       }
     }
     _addObject (this, unpacked, material);

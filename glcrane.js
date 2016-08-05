@@ -19,7 +19,7 @@ var shaderNormalVertex,  shaderNormalFragment,  shaderNormalProgram,
 var matrixPerspective,  matrixModelView, matrixNormal,
     matrixOrthographic, matrixIdentity4, matrixIdentity3,
     matrixViewer;
-var textureArray = [];
+var textureArray = [], textureShadow = ["Sombra"];
 var fbPicking, fbModel, fbCurrent = null;
 var colorWhite = [1.00, 1.00, 1.00, 1.00],
     colorBlack = [0.00, 0.00, 0.00, 1.00];
@@ -227,14 +227,17 @@ function glInitModels () {
    // Load our crane object.
    modelCrane = new OBJ.Mesh (domCrane.innerHTML);
    OBJ.initMeshBuffers (gl, modelCrane);
+   glCheckError ();
 
    // Load our texture viewer.
    modelViewer = new OBJ.Mesh (domViewer.innerHTML);
    OBJ.initMeshBuffers (gl, modelViewer);
+   glCheckError ();
 
    // Load our spraypaint object.
    modelPaint = new OBJ.Mesh (domPaint.innerHTML);
    OBJ.initMeshBuffers (gl, modelPaint);
+   glCheckError ();
 }
 
 function glInitTextures () {
@@ -258,7 +261,7 @@ function glFramebufferCopyTexture (fb, texture) {
    var matrix = glFramebufferOrtho (fb);
    glUseFramebuffer (fb);
    glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00, colorWhite);
-   glDrawObject (modelPaint, { Paint: texture });
+   glDrawObject (modelPaint, modelTextures (modelPaint, texture, null));
    glUseFramebuffer (null);
 }
 
@@ -293,10 +296,8 @@ function glInitState () {
    // Proper render state.
    gl.enable (gl.DEPTH_TEST);
    gl.depthFunc (gl.LESS);
-/*
    gl.enable (gl.CULL_FACE);
    gl.cullFace (gl.BACK);
-*/
    gl.enable (gl.BLEND);
    gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 }
@@ -465,28 +466,29 @@ function glClearScreen (v, a) {
 
 function glDrawScene (picking) {
    // Different textures depending on mode.
-   var textures = [], light;
+   var base, shadow, light;
    if (picking) {
       glClearScreen (0.00, 0.00);
-      textures.PapelOrigami = "uv_map";
+      base   = "uv_map";
+      shadow = null;
       light = 0.00;
    }
    else {
       glClearScreen (0.25, 1.00);
-      textures.Sombra       = "shadow";
-      textures.PapelOrigami = "model";
+      base   = "model";
+      shadow = "shadow";
       light = 1.00;
    }
 
    // Draw our crane in perspective space.
    glSetUniforms (matrixPerspective, matrixModelView, matrixNormal, light,
       colorWhite);
-   glDrawObject (modelCrane, textures);
+   glDrawObject (modelCrane, modelTextures (modelCrane, base, shadow));
 
    // Draw our texture in orthographic space.
    glSetUniforms (matrixOrthographic, matrixViewer, matrixIdentity3, 0.00,
       null);
-   glDrawObject (modelViewer, textures);
+   glDrawObject (modelViewer, modelTextures (modelViewer, base, shadow));
 }
 
 function glDrawObject (obj, textures)
@@ -519,22 +521,26 @@ function glDrawObject (obj, textures)
 
    // Draw all objects.
    for (var i = 0; i < obj.objects; i++) {
-      if (!(m = obj.materials[i]))
-         continue;
-      if (!(t = textures[m]))
-         continue;
-      if (!textureArray[t] || textureArray[t].incomplete)
-         continue;
-      if (shaderProgram.uTex0) {
-         gl.activeTexture (gl.TEXTURE0);
-         gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);
-         gl.uniform1i (shaderProgram.uTex0, 0);
+      try {
+         if (!(m = obj.materials[i]))
+            continue;
+         if (!(t = textures[m]))
+            continue;
+         if (!textureArray[t] || textureArray[t].incomplete)
+            continue;
+         if (shaderProgram.uTex0) {
+            gl.activeTexture (gl.TEXTURE0);
+            gl.bindTexture (gl.TEXTURE_2D, textureArray[t]);
+            gl.uniform1i (shaderProgram.uTex0, 0);
+            glCheckError ();
+         }
+         gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, obj.indexBuffer[i]);
+         gl.drawElements (gl.TRIANGLES, obj.indexBuffer[i].numItems,
+            gl.UNSIGNED_SHORT, 0);
          glCheckError ();
       }
-      gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, obj.indexBuffer[i]);
-      gl.drawElements (gl.TRIANGLES, obj.indexBuffer[i].numItems,
-         gl.UNSIGNED_SHORT, 0);
-      glCheckError ();
+      catch (e) {
+      }
    }
 }
 
@@ -570,8 +576,8 @@ function glCreateFramebuffer (width, height, depth) {
       gl.clear (gl.DEPTH_BUFFER_BIT);
    }
 
-   // Texture is magenta by default.
-   gl.clearColor (1.00, 0.00, 1.00, 1.00);
+   // Texture is transparent by default.
+   gl.clearColor (0.00, 0.00, 0.00, 0.00);
    gl.clear (gl.COLOR_BUFFER_BIT);
 
    // Unbind.
@@ -855,57 +861,36 @@ function mouseDrawBuffers (w, h, pixelsf) {
    gl.useProgram (shaderProgram);
 }
 
-var iStep = (mouseDrawSize * 0.25);
+var mSize = (1.00 / 64.00);
 function mouseDraw () {
-   return mouseDrawAt (mouseX, mouseY);
-/*
-   // What is the UV coordinate under the mouse?  Read a pixel from
-   // the picking framebuffer.
-   var pixels = new Uint8Array(4);
-   gl.bindFramebuffer (gl.FRAMEBUFFER, fbPicking);
-   gl.readPixels (mouseX, mouseYflip, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-   gl.bindFramebuffer (gl.FRAMEBUFFER, null);
-   glCheckError ();
-
-   // Do nothing if we're hovering over blank space.
-   if (pixels[3] < 1.00) {
-      mouseU = null;
-      mouseV = null;
-      return 0;
-   }
-
-   // Determine texture coordinate based on pixel read.
-   mouseU = parseFloat (pixels[0]) / 255.00,
-   mouseV = parseFloat (pixels[1]) / 255.00;
-
-   // Keep track of how much we've drawn.
    var count = 0;
 
+/*
    // Draw a trail.
-   var x = mouseU * 2.00 - 1.00, y = mouseV * 2.00 - 1.00;
-   if (mouseLastU && mouseLastV) {
-      var dist = Math.hypot (mouseU - mouseLastU, mouseV - mouseLastV);
-      if (dist > iStep) {
-         var ix = mouseLastU * 2.00 - 1.00, iy = mouseLastV * 2.00 - 1.00;
-         var ixStep = (x - ix) / dist * iStep, iyStep = (y - iy) / dist * iStep;
-         for (var i = iStep; i < dist; i += iStep) {
+   var x = mouseX, y = mouseY, size = mSize * gl.viewportHeight / 2.00;
+   if (mouseLastX != null && mouseLastY != null) {
+      var dist = Math.hypot (mouseX - mouseLastX, mouseY - mouseLastY);
+      if (dist > size) {
+         var ix = mouseLastX, iy = mouseLastY;
+         var ixStep = ((mouseX - ix) / dist) * size,
+             iyStep = ((mouseY - iy) / dist) * size;
+         console.log (dist + ": " + ixStep + ", " + iyStep);
+         for (var i = size; i < dist; i += size) {
             ix += ixStep;
             iy += iyStep;
-            mouseDrawAt (ix, iy);
+            mouseDrawAt (parseInt (ix), parseInt (iy));
             count++;
          }
       }
    }
-
-   // Draw our destination.
-   mouseDrawAt (x, y);
-   return count + 1;
 */
+   count += mouseDrawAt (mouseX, mouseY);
+   return count;
 }
 
 function mouseDrawAt (x, y) {
    // Get the area we're drawing.
-   var h = parseInt (gl.viewportHeight / 32.00), w = h,
+   var h = parseInt (gl.viewportHeight * mSize), w = h,
        wh = w * h, wh4 = wh * 4, wh44 = wh4 * 4;
 
    var pixels = new Uint8Array (wh4);
@@ -915,7 +900,7 @@ function mouseDrawAt (x, y) {
    var pixelsf = new Float32Array (wh44);
    var i, j, k;
 
-   var pw = 0.015625, pw2 = pw * 2;
+   var pw = mSize * 0.50, pw2 = pw * 2;
    for (i = 0, j = 0; i < wh4; i += 4, j += 16) {
       pixelsf[j +  0] = pixels[i + 0] / 128.00 - 1.00 - pw;
       pixelsf[j +  1] = pixels[i + 1] / 128.00 - 1.00 - pw;
@@ -969,28 +954,17 @@ function mouseDrawAt (x, y) {
 
    glUseFramebuffer (null);
    glUseProgram (shaderNormalProgram);
-
    return 1;
-/*
-   var ortho = glFramebufferOrtho (fbModel);
+}
 
-   // Set up a matrix for our drawing.
-   var matrix = mat4.create ();
-   mat4.identity (matrix);
-   mat4.scalar.translate (matrix, matrix, [x, y, 1.00]);
-   mat4.scalar.scale     (matrix, matrix, [mouseDrawSize, mouseDrawSize,1.00]);
-   mat4.scalar.translate (matrix, matrix,
-      [0.05 / mouseDrawSize, 0.05 / mouseDrawSize, 0]);
-
-   // Place on paper.
-   glSetUniforms (ortho, matrix, matrixIdentity3, 0.00, mouseDrawColor);
-
-   // Bind our model texture framebuffer and perform a draw.
-   glUseFramebuffer (fbModel);
-   gl.blendFuncSeparate (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
-                         gl.ONE, gl.ONE);
-   glDrawObject (modelPaint, { Paint: "paint" });
-   gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-   glUseFramebuffer (null);
-*/
+function modelTextures (model, base, shadow) {
+   var tex = [];
+   for (i = 0; i < model.objects; i++) {
+      var m = model.materials[i];
+      if (textureShadow.indexOf (m) > -1)
+         tex[m] = shadow;
+      else
+         tex[m] = base;
+   }
+   return tex;
 }
