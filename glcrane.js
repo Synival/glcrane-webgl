@@ -278,7 +278,7 @@ function glInitMatrices () {
    // Draw everything back a bit, rotated downward 30 degrees.
    mat4.identity (matrixModelView);
    var v = vec3.create ();
-   vec3.set (v, 0.00, 0.00, -5.00);
+   vec3.set (v, 0.00, -0.25, -4.00);
    mat4.translate (matrixModelView, matrixModelView, v);
    vec3.set (v, 1.00, 0.00, 0.00);
    mat4.rotate (matrixModelView, matrixModelView, 30.00 / 180.00 * Math.PI, v);
@@ -294,7 +294,6 @@ function glInitMatrices () {
 
 function glInitState () {
    // Proper render state.
-   gl.enable (gl.DEPTH_TEST);
    gl.depthFunc (gl.LESS);
    gl.enable (gl.CULL_FACE);
    gl.cullFace (gl.BACK);
@@ -483,7 +482,9 @@ function glDrawScene (picking) {
    // Draw our crane in perspective space.
    glSetUniforms (matrixPerspective, matrixModelView, matrixNormal, light,
       colorWhite);
+   gl.enable (gl.DEPTH_TEST);
    glDrawObject (modelCrane, modelTextures (modelCrane, base, shadow));
+   gl.disable (gl.DEPTH_TEST);
 
    // Draw our texture in orthographic space.
    glSetUniforms (matrixOrthographic, matrixViewer, matrixIdentity3, 0.00,
@@ -861,7 +862,7 @@ function mouseDrawBuffers (w, h, pixelsf) {
    gl.useProgram (shaderProgram);
 }
 
-var mSize = (1.00 / 64.00);
+var mSize = (1.00 / 48.00);
 function mouseDraw () {
    var count = 0;
 
@@ -889,71 +890,97 @@ function mouseDraw () {
 }
 
 function mouseDrawAt (x, y) {
-   // Get the area we're drawing.
+   // Pre-calculations for our pixel buffers.
    var h = parseInt (gl.viewportHeight * mSize), w = h,
        wh = w * h, wh4 = wh * 4, wh44 = wh4 * 4;
 
+   // Get a block of pixels at the mouse's location.
    var pixels = new Uint8Array (wh4);
    glUseFramebuffer (fbPicking);
    gl.readPixels (mouseX - w/2, mouseYflip - h/2, w, h, gl.RGBA,
       gl.UNSIGNED_BYTE, pixels);
-   var pixelsf = new Float32Array (wh44);
-   var i, j, k;
 
-   var pw = mSize * 0.50, pw2 = pw * 2;
+   // The pixels represent UV coordinates.  Convert to polygon vertices
+   // in a 2x2 block.
+   var pixelsf = new Float32Array (wh44),
+       pw = mSize * 0.50, pw2 = pw * 2,
+       i, j, k, a = 0;
    for (i = 0, j = 0; i < wh4; i += 4, j += 16) {
+      // Upper-left
       pixelsf[j +  0] = pixels[i + 0] / 128.00 - 1.00 - pw;
       pixelsf[j +  1] = pixels[i + 1] / 128.00 - 1.00 - pw;
       pixelsf[j +  2] = pixels[i + 2] / 255.00;
       pixelsf[j +  3] = pixels[i + 3] / 255.00;
 
+      // Upper-right
       pixelsf[j +  4] = pixelsf[j + 0] + pw2;
       pixelsf[j +  5] = pixelsf[j + 1];
       pixelsf[j +  6] = pixelsf[j + 2];
       pixelsf[j +  7] = pixelsf[j + 3];
 
+      // Lower-right
       pixelsf[j +  8] = pixelsf[j + 0] + pw2;
       pixelsf[j +  9] = pixelsf[j + 1] + pw2;
       pixelsf[j + 10] = pixelsf[j + 2];
       pixelsf[j + 11] = pixelsf[j + 3];
 
+      // Lower-left
       pixelsf[j + 12] = pixelsf[j + 0];
       pixelsf[j + 13] = pixelsf[j + 1] + pw2;
       pixelsf[j + 14] = pixelsf[j + 2];
       pixelsf[j + 15] = pixelsf[j + 3];
+
+      // Accumulate a grand total of alpha to check if we're actually drawing
+      // on the model.
+      a += pixels[i + 3];
    }
+   // If we didn't find any alpha, we're not drawing.  Return 0.
+   if (a == 0)
+      return 0;
 
    // Initialize all the buffers we need to draw.
    mouseDrawBuffers (w, h, pixelsf);
 
-   glUseProgram (shaderConvertProgram);
+   // Draw onto the model framebuffer.
    glUseFramebuffer (fbModel);
+   var matrix = glFramebufferOrtho (fbModel);
 
-      var matrix = glFramebufferOrtho (fbModel);
-      glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00,
-         mouseDrawColor);
-      gl.activeTexture (gl.TEXTURE0);
-      gl.bindTexture (gl.TEXTURE_2D, textureArray.paint);
-      gl.uniform1i (shaderProgram.uTex0, 0);
+   // Use the RGB->XYV conversion shader.
+   glUseProgram (shaderConvertProgram);
+   glSetUniforms (matrix, matrixIdentity4, matrixIdentity3, 0.00,
+      mouseDrawColor);
 
-      gl.bindBuffer (gl.ARRAY_BUFFER, mdVertexBuffer);
-      gl.vertexAttribPointer (shaderProgram.aPosition,
-         mdVertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
+   // Bind vertex coordinates (calculated every frame in mouseDrawBuffers() ).
+   gl.bindBuffer (gl.ARRAY_BUFFER, mdVertexBuffer);
+   gl.vertexAttribPointer (shaderProgram.aPosition,
+      mdVertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
 
+   // Bind texture coordinates (calculated once).
       gl.bindBuffer (gl.ARRAY_BUFFER, mdTexcoordBuffer);
       gl.vertexAttribPointer (shaderProgram.aTexcoord0,
          mdTexcoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
 
-      gl.blendFuncSeparate (gl.ONE, gl.ONE_MINUS_SRC_ALPHA,
-         gl.ONE, gl.ONE);
-      gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, mdIndexBuffer);
-      gl.drawElements (gl.TRIANGLES, mdIndexBuffer.numItems,
-         gl.UNSIGNED_SHORT, 0);
-      gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      glCheckError ();
+   // Use our 'paint' texture.
+   gl.activeTexture (gl.TEXTURE0);
+   gl.bindTexture (gl.TEXTURE_2D, textureArray.paint);
+   gl.uniform1i (shaderProgram.uTex0, 0);
 
+   // Additive color with premultiplied-alpha textures.
+   gl.blendFuncSeparate (gl.ONE, gl.ONE_MINUS_SRC_ALPHA,
+      gl.ONE, gl.ONE);
+
+   // Draw!
+   gl.bindBuffer (gl.ELEMENT_ARRAY_BUFFER, mdIndexBuffer);
+   gl.drawElements (gl.TRIANGLES, mdIndexBuffer.numItems,
+      gl.UNSIGNED_SHORT, 0);
+
+   // Return to our normal state.
+   gl.blendFunc (gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+   glCheckError ();
    glUseFramebuffer (null);
    glUseProgram (shaderNormalProgram);
+
+   // Return '1' because we drew one splotch of paint.
    return 1;
 }
 
