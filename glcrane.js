@@ -242,15 +242,16 @@ function glInitModels () {
 
 function glInitTextures () {
    // Build our array of textures to load.
-   var modelTexture = glQueueTexture ("fire",   "images/fire.jpg");
-   glQueueTexture ("shadow", "images/shadow.png");
+   modelTexture = glQueueTexture ("fire", "images/fire.jpg");
+   glQueueTexture ("mapped", "images/mapped.png");
    glQueueTexture ("paper",  "images/paper.jpg");
+   glQueueTexture ("shadow", "images/shadow.png");
    glQueueTexture ("uv_map", "images/uv_map.jpg");
    glQueueTexture ("paint",  "images/paint.png");
 
    // When our main texture finishes, copy it to our framebuffer.
    modelTexture.whenFinished = function (id, element) {
-      glFramebufferCopyTexture (fbModel, "fire");
+      glFramebufferCopyTexture (fbModel, modelTexture.name);
    };
 
    // Start loading textures.
@@ -324,6 +325,7 @@ function glQueueTexture (name, url)
 
    // We're going to use the GL object as our reference.
    // Store valuable info in it.
+   id.name       = name;
    id.url        = url;
    id.element    = element;
    id.incomplete = true;
@@ -736,6 +738,10 @@ function canvasKeyDown (e) {
    else if (e.key == "2") {
       mouseDrawColor = colorWhite;
       glFramebufferCopyTexture (fbModel, "fire");
+   }
+   else if (e.key == "3") {
+      mouseDrawColor = colorWhite;
+      glFramebufferCopyTexture (fbModel, "mapped");
    }
 }
 
