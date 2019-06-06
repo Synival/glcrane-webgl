@@ -2,4 +2,4 @@
 WebGL-based Crane renderer and spraypainting tool
 
 ### Play with it now!
-[http://baroque-creations.com/glcrane/](http://baroque-creations.com/glcrane/)
+[https://synival.github.io/glcrane-webgl/](https://synival.github.io/glcrane-webgl/)
